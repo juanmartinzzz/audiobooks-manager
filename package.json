@@ -1,0 +1,21 @@
+{
+  "name": "audiobooks-manager",
+  "private": true,
+  "workspaces": [
+    "web",
+    "api"
+  ],
+  "scripts": {
+    "dev": "CI=true concurrently -n web,api -c cyan,magenta \"npm run dev -w web\" \"npm run dev -w api\"",
+    "dev:web": "npm run dev -w web",
+    "dev:api": "npm run dev -w api",
+    "build": "npm run build -w web",
+    "types:api": "npm run types -w api",
+    "deploy:api": "npm run deploy -w api",
+    "migrate:remote": "npm run migrate:remote -w api",
+    "deploy:web": "npm run build -w web && npm run deploy -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}

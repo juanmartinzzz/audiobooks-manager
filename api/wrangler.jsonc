@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "audiobooks-manager-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "audiobooks-manager",
+      "database_id": "1046e529-7c16-4e39-bb8c-b6800941aefb",
+      "migrations_dir": "./migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "AUDIO",
+      "bucket_name": "audiobooks-manager-audio",
+    },
+  ],
+}

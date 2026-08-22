@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-ssr
+.wrangler
+.dev.vars
+.env
+.env.local
+.env.*.local
+*.tsbuildinfo
+.DS_Store
+.vite
+worker-configuration.d.ts
+

@@ -1,0 +1,19 @@
+{
+  "name": "api",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler d1 migrations apply audiobooks-manager --local && wrangler dev",
+    "deploy": "wrangler deploy",
+    "migrate:remote": "wrangler d1 migrations apply audiobooks-manager --remote",
+    "types": "wrangler types",
+    "check": "wrangler types && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.13.3"
+  },
+  "devDependencies": {
+    "wrangler": "^4.125.0"
+  }
+}

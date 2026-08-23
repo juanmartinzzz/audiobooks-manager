@@ -11,7 +11,7 @@ export type PlaybackPrefs = {
 };
 
 export const DEFAULT_PLAYBACK_SETTINGS: PlaybackSettings = {
-  segmentMinutes: 5,
+  segmentMinutes: 2,
   skipBack: 15,
   skipForward: 30,
 };

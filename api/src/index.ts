@@ -42,7 +42,8 @@ app.get("/api/audiobooks", async (c) => {
         a.created_at, a.updated_at,
         COUNT(ch.id) AS chapter_count
       FROM audiobooks a
-      LEFT JOIN chapters ch ON ch.audiobook_id = a.id
+      LEFT JOIN chapters ch ON ch.audiobook_id = a.id AND ch.removed_at IS NULL
+      WHERE a.removed_at IS NULL
       GROUP BY a.id
       ORDER BY a.updated_at DESC`,
   ).all<AudiobookRecord & { chapter_count: number }>();
@@ -90,8 +91,8 @@ app.get("/api/audiobooks/:id", async (c) => {
         ch.created_at, ch.updated_at,
         a.duration_seconds, a.size_bytes
       FROM chapters ch
-      LEFT JOIN assets a ON a.id = ch.audio_asset_id
-      WHERE ch.audiobook_id = ?
+      LEFT JOIN assets a ON a.id = ch.audio_asset_id AND a.removed_at IS NULL
+      WHERE ch.audiobook_id = ? AND ch.removed_at IS NULL
       ORDER BY ch.position ASC`,
   )
     .bind(audiobook.id)
@@ -112,7 +113,7 @@ app.patch("/api/audiobooks/:id", async (c) => {
     `UPDATE audiobooks SET
         title = ?, subtitle = ?, author = ?, narrator = ?,
         series_title = ?, series_index = ?, description = ?, updated_at = ?
-      WHERE id = ?`,
+      WHERE id = ? AND removed_at IS NULL`,
   )
     .bind(
       title,
@@ -134,7 +135,22 @@ app.patch("/api/audiobooks/:id", async (c) => {
 app.delete("/api/audiobooks/:id", async (c) => {
   const existing = await loadAudiobook(c.env.DB, c.req.param("id"));
   if (!existing) return c.json({ error: "Audiobook not found" }, 404);
-  await c.env.DB.prepare("DELETE FROM audiobooks WHERE id = ?").bind(existing.id).run();
+  const now = Date.now();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE audiobooks SET removed_at = ?, updated_at = ? WHERE id = ? AND removed_at IS NULL`,
+    ).bind(now, now, existing.id),
+    c.env.DB.prepare(
+      `UPDATE chapters SET removed_at = ?, updated_at = ? WHERE audiobook_id = ? AND removed_at IS NULL`,
+    ).bind(now, now, existing.id),
+    c.env.DB.prepare(
+      `UPDATE assets SET removed_at = ?, updated_at = ? WHERE audiobook_id = ? AND removed_at IS NULL`,
+    ).bind(now, now, existing.id),
+    c.env.DB.prepare(
+      `UPDATE playback_progress SET removed_at = ?, updated_at = ?
+        WHERE audiobook_id = ? AND removed_at IS NULL`,
+    ).bind(now, now, existing.id),
+  ]);
   return c.json({ ok: true });
 });
 
@@ -172,7 +188,7 @@ app.patch("/api/chapters/:id", async (c) => {
   const now = Date.now();
 
   await c.env.DB.prepare(
-    `UPDATE chapters SET title = ?, position = ?, updated_at = ? WHERE id = ?`,
+    `UPDATE chapters SET title = ?, position = ?, updated_at = ? WHERE id = ? AND removed_at IS NULL`,
   )
     .bind(title, position, now, existing.id)
     .run();
@@ -185,8 +201,17 @@ app.patch("/api/chapters/:id", async (c) => {
 app.delete("/api/chapters/:id", async (c) => {
   const existing = await loadChapter(c.env.DB, c.req.param("id"));
   if (!existing) return c.json({ error: "Chapter not found" }, 404);
-  await c.env.DB.prepare("DELETE FROM chapters WHERE id = ?").bind(existing.id).run();
-  await touchAudiobook(c.env.DB, existing.audiobookId, Date.now());
+  const now = Date.now();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE chapters SET removed_at = ?, updated_at = ? WHERE id = ? AND removed_at IS NULL`,
+    ).bind(now, now, existing.id),
+    c.env.DB.prepare(
+      `UPDATE playback_progress SET removed_at = ?, updated_at = ?
+        WHERE chapter_id = ? AND removed_at IS NULL`,
+    ).bind(now, now, existing.id),
+  ]);
+  await touchAudiobook(c.env.DB, existing.audiobookId, now);
   return c.json({ ok: true });
 });
 
@@ -256,8 +281,8 @@ async function loadAudiobook(db: D1Database, id: string): Promise<Audiobook | nu
           a.created_at, a.updated_at,
           COUNT(ch.id) AS chapter_count
         FROM audiobooks a
-        LEFT JOIN chapters ch ON ch.audiobook_id = a.id
-        WHERE a.id = ?
+        LEFT JOIN chapters ch ON ch.audiobook_id = a.id AND ch.removed_at IS NULL
+        WHERE a.id = ? AND a.removed_at IS NULL
         GROUP BY a.id`,
     )
     .bind(id)
@@ -273,8 +298,8 @@ async function loadChapter(db: D1Database, id: string): Promise<Chapter | null> 
           ch.created_at, ch.updated_at,
           a.duration_seconds, a.size_bytes
         FROM chapters ch
-        LEFT JOIN assets a ON a.id = ch.audio_asset_id
-        WHERE ch.id = ?`,
+        LEFT JOIN assets a ON a.id = ch.audio_asset_id AND a.removed_at IS NULL
+        WHERE ch.id = ? AND ch.removed_at IS NULL`,
     )
     .bind(id)
     .first<ChapterRecord>();
@@ -283,14 +308,20 @@ async function loadChapter(db: D1Database, id: string): Promise<Chapter | null> 
 
 async function nextChapterPosition(db: D1Database, audiobookId: string): Promise<number> {
   const row = await db
-    .prepare(`SELECT COALESCE(MAX(position), 0) AS max_position FROM chapters WHERE audiobook_id = ?`)
+    .prepare(
+      `SELECT COALESCE(MAX(position), 0) AS max_position
+        FROM chapters WHERE audiobook_id = ? AND removed_at IS NULL`,
+    )
     .bind(audiobookId)
     .first<{ max_position: number }>();
   return (row?.max_position ?? 0) + 1;
 }
 
 async function touchAudiobook(db: D1Database, id: string, now: number): Promise<void> {
-  await db.prepare(`UPDATE audiobooks SET updated_at = ? WHERE id = ?`).bind(now, id).run();
+  await db
+    .prepare(`UPDATE audiobooks SET updated_at = ? WHERE id = ? AND removed_at IS NULL`)
+    .bind(now, id)
+    .run();
 }
 
 function mapAudiobook(row: AudiobookRecord & { chapter_count: number }): Audiobook {

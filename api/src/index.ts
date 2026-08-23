@@ -10,9 +10,11 @@ import type {
   Audiobook,
   AudiobookRecord,
   Chapter,
+  ChapterProgress,
   ChapterRecord,
   CreateAudiobookInput,
   CreateChapterInput,
+  SaveChapterProgressInput,
 } from "./types";
 
 const DIRECT_PUT_MAX_BYTES = 99 * 1024 * 1024;
@@ -56,24 +58,36 @@ app.use(
 app.get("/api/health", (c) => c.json({ ok: true }));
 
 app.get("/api/audiobooks", async (c) => {
-  const { results } = await c.env.DB.prepare(
-    `SELECT
-        a.id, a.title, a.subtitle, a.author, a.narrator,
-        a.series_title, a.series_index, a.description,
-        a.created_at, a.updated_at,
-        COUNT(ch.id) AS chapter_count,
-        EXISTS (
-          SELECT 1 FROM assets cov
-          WHERE cov.audiobook_id = a.id AND cov.kind = 'cover' AND cov.removed_at IS NULL
-        ) AS has_cover
-      FROM audiobooks a
-      LEFT JOIN chapters ch ON ch.audiobook_id = a.id AND ch.removed_at IS NULL
-      WHERE a.removed_at IS NULL
-      GROUP BY a.id
-      ORDER BY a.updated_at DESC`,
-  ).all<AudiobookRecord & { chapter_count: number; has_cover: number }>();
+  const [books, progressRows] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT
+          a.id, a.title, a.subtitle, a.author, a.narrator,
+          a.series_title, a.series_index, a.description,
+          a.created_at, a.updated_at,
+          COUNT(ch.id) AS chapter_count,
+          EXISTS (
+            SELECT 1 FROM assets cov
+            WHERE cov.audiobook_id = a.id AND cov.kind = 'cover' AND cov.removed_at IS NULL
+          ) AS has_cover
+        FROM audiobooks a
+        LEFT JOIN chapters ch ON ch.audiobook_id = a.id AND ch.removed_at IS NULL
+        WHERE a.removed_at IS NULL
+        GROUP BY a.id
+        ORDER BY a.updated_at DESC`,
+    ).all<AudiobookRecord & { chapter_count: number; has_cover: number }>(),
+    c.env.DB.prepare(
+      `SELECT audiobook_id, chapter_id, position_seconds, duration_seconds, completed, updated_at
+        FROM playback_progress
+        WHERE removed_at IS NULL`,
+    ).all<ProgressRecord>(),
+  ]);
 
-  return c.json({ audiobooks: results.map(mapAudiobook) });
+  const progressByBook = groupProgressByAudiobook(progressRows.results ?? []);
+  return c.json({
+    audiobooks: books.results.map((row) =>
+      mapAudiobook(row, summarizeProgress(progressByBook.get(row.id) ?? [], Number(row.chapter_count))),
+    ),
+  });
 });
 
 app.post("/api/audiobooks", async (c) => {
@@ -114,16 +128,33 @@ app.get("/api/audiobooks/:id", async (c) => {
     `SELECT
         ch.id, ch.audiobook_id, ch.position, ch.title, ch.audio_asset_id,
         ch.created_at, ch.updated_at,
-        a.duration_seconds, a.size_bytes, a.container, a.bitrate, a.sample_rate, a.channels
+        a.duration_seconds, a.size_bytes, a.container, a.bitrate, a.sample_rate, a.channels,
+        p.position_seconds AS progress_position,
+        p.duration_seconds AS progress_duration,
+        p.completed AS progress_completed,
+        p.updated_at AS progress_updated_at
       FROM chapters ch
       LEFT JOIN assets a ON a.id = ch.audio_asset_id AND a.removed_at IS NULL
+      LEFT JOIN playback_progress p
+        ON p.chapter_id = ch.id AND p.audiobook_id = ch.audiobook_id AND p.removed_at IS NULL
       WHERE ch.audiobook_id = ? AND ch.removed_at IS NULL
       ORDER BY ch.position ASC`,
   )
     .bind(audiobook.id)
-    .all<ChapterRecord>();
+    .all<ChapterRecord & ProgressJoin>();
 
-  return c.json({ audiobook, chapters: results.map(mapChapter) });
+  const chapters = results.map(mapChapter);
+  const progress = results.flatMap((row) => {
+    const item = mapJoinedProgress(row);
+    return item ? [item] : [];
+  });
+  const summary = summarizeProgress(progress, chapters.length);
+
+  return c.json({
+    audiobook: { ...audiobook, ...summary },
+    chapters,
+    progress,
+  });
 });
 
 app.get("/api/audiobooks/:id/cover", async (c) => {
@@ -416,6 +447,52 @@ app.patch("/api/chapters/:id", async (c) => {
   return c.json({ chapter });
 });
 
+app.put("/api/chapters/:id/progress", async (c) => {
+  const chapter = await loadChapter(c.env.DB, c.req.param("id"));
+  if (!chapter) return c.json({ error: "Chapter not found" }, 404);
+
+  const body = await readJson<SaveChapterProgressInput>(c.req.raw);
+  const positionSeconds = requiredFiniteNumber(body.positionSeconds, "positionSeconds", 0);
+  const durationSeconds =
+    body.durationSeconds === undefined ? chapter.durationSeconds : optionalDurationSeconds(body.durationSeconds);
+  const cappedPosition =
+    durationSeconds != null && durationSeconds > 0
+      ? Math.min(positionSeconds, durationSeconds)
+      : positionSeconds;
+  const completed =
+    body.completed === undefined
+      ? completedFromPosition(cappedPosition, durationSeconds)
+      : body.completed
+        ? 1
+        : 0;
+  const now = Date.now();
+
+  await c.env.DB.prepare(
+    `INSERT INTO playback_progress (
+        audiobook_id, chapter_id, position_seconds, duration_seconds, completed,
+        created_at, updated_at, removed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
+      ON CONFLICT(audiobook_id, chapter_id) DO UPDATE SET
+        position_seconds = excluded.position_seconds,
+        duration_seconds = COALESCE(excluded.duration_seconds, playback_progress.duration_seconds),
+        completed = excluded.completed,
+        updated_at = excluded.updated_at,
+        removed_at = NULL`,
+  )
+    .bind(chapter.audiobookId, chapter.id, cappedPosition, durationSeconds, completed, now, now)
+    .run();
+
+  const progress: ChapterProgress = {
+    chapterId: chapter.id,
+    audiobookId: chapter.audiobookId,
+    positionSeconds: cappedPosition,
+    durationSeconds,
+    completed: Boolean(completed),
+    updatedAt: now,
+  };
+  return c.json({ progress });
+});
+
 app.delete("/api/chapters/:id", async (c) => {
   const existing = await loadChapter(c.env.DB, c.req.param("id"));
   if (!existing) return c.json({ error: "Chapter not found" }, 404);
@@ -533,6 +610,19 @@ function requiredPositiveInt(value: unknown, field: string): number {
     throw new HttpError(`${field} must be a positive integer`, 400);
   }
   return value;
+}
+
+function requiredFiniteNumber(value: unknown, field: string, min = 0): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < min) {
+    throw new HttpError(`${field} must be a number ${min === 0 ? "0 or greater" : `at least ${min}`}`, 400);
+  }
+  return value;
+}
+
+function completedFromPosition(positionSeconds: number, durationSeconds: number | null): number {
+  if (durationSeconds == null || durationSeconds <= 0) return 0;
+  if (positionSeconds >= durationSeconds - 3 || positionSeconds / durationSeconds > 0.96) return 1;
+  return 0;
 }
 
 function requiredUuid(value: unknown, field: string): string {
@@ -927,7 +1017,91 @@ async function touchAudiobook(db: D1Database, id: string, now: number): Promise<
     .run();
 }
 
-function mapAudiobook(row: AudiobookRecord & { chapter_count: number; has_cover?: number }): Audiobook {
+type ProgressRecord = {
+  audiobook_id: string;
+  chapter_id: string;
+  position_seconds: number;
+  duration_seconds: number | null;
+  completed: number;
+  updated_at: number;
+};
+
+type ProgressJoin = {
+  progress_position: number | null;
+  progress_duration: number | null;
+  progress_completed: number | null;
+  progress_updated_at: number | null;
+};
+
+type ProgressSummary = {
+  completedChapterCount: number;
+  progressRatio: number;
+  lastPlayedChapterId: string | null;
+};
+
+function groupProgressByAudiobook(rows: ProgressRecord[]): Map<string, ChapterProgress[]> {
+  const grouped = new Map<string, ChapterProgress[]>();
+  for (const row of rows) {
+    const list = grouped.get(row.audiobook_id) ?? [];
+    list.push(mapProgressRecord(row));
+    grouped.set(row.audiobook_id, list);
+  }
+  return grouped;
+}
+
+function mapProgressRecord(row: ProgressRecord): ChapterProgress {
+  return {
+    chapterId: row.chapter_id,
+    audiobookId: row.audiobook_id,
+    positionSeconds: row.position_seconds,
+    durationSeconds: row.duration_seconds,
+    completed: Boolean(row.completed),
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapJoinedProgress(row: ChapterRecord & ProgressJoin): ChapterProgress | null {
+  if (row.progress_updated_at == null || row.progress_position == null) return null;
+  return {
+    chapterId: row.id,
+    audiobookId: row.audiobook_id,
+    positionSeconds: row.progress_position,
+    durationSeconds: row.progress_duration,
+    completed: Boolean(row.progress_completed),
+    updatedAt: row.progress_updated_at,
+  };
+}
+
+function summarizeProgress(rows: ChapterProgress[], chapterCount: number): ProgressSummary {
+  let completedChapterCount = 0;
+  let playedSum = 0;
+  let lastPlayedChapterId: string | null = null;
+  let lastUpdated = -1;
+
+  for (const row of rows) {
+    if (row.completed) completedChapterCount += 1;
+    if (row.completed) {
+      playedSum += 1;
+    } else if (row.durationSeconds != null && row.durationSeconds > 0) {
+      playedSum += Math.min(1, Math.max(0, row.positionSeconds / row.durationSeconds));
+    }
+    if (row.updatedAt > lastUpdated) {
+      lastUpdated = row.updatedAt;
+      lastPlayedChapterId = row.chapterId;
+    }
+  }
+
+  return {
+    completedChapterCount,
+    progressRatio: chapterCount > 0 ? Math.min(1, playedSum / chapterCount) : 0,
+    lastPlayedChapterId,
+  };
+}
+
+function mapAudiobook(
+  row: AudiobookRecord & { chapter_count: number; has_cover?: number },
+  summary?: ProgressSummary,
+): Audiobook {
   return {
     id: row.id,
     title: row.title,
@@ -941,6 +1115,9 @@ function mapAudiobook(row: AudiobookRecord & { chapter_count: number; has_cover?
     updatedAt: row.updated_at,
     chapterCount: Number(row.chapter_count),
     hasCover: Boolean(row.has_cover),
+    completedChapterCount: summary?.completedChapterCount ?? 0,
+    progressRatio: summary?.progressRatio ?? 0,
+    lastPlayedChapterId: summary?.lastPlayedChapterId ?? null,
   };
 }
 

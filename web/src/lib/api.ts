@@ -1,4 +1,4 @@
-import type { Audiobook, AudiobookDraft, Chapter } from "../types";
+import type { Audiobook, AudiobookDraft, Chapter, ChapterProgress } from "../types";
 import { durationFromAudioFile } from "./audioDuration";
 
 // Local `npm run dev` and production builds both call the production API.
@@ -10,8 +10,9 @@ const PART_SIZE = 10 * 1024 * 1024;
 
 type AudiobookListResponse = { audiobooks: Audiobook[] };
 type AudiobookResponse = { audiobook: Audiobook };
-type AudiobookDetailResponse = { audiobook: Audiobook; chapters: Chapter[] };
+type AudiobookDetailResponse = { audiobook: Audiobook; chapters: Chapter[]; progress: ChapterProgress[] };
 type ChapterResponse = { chapter: Chapter };
+type ChapterProgressResponse = { progress: ChapterProgress };
 
 export class ApiError extends Error {
   status: number;
@@ -52,6 +53,20 @@ export function listAudiobooks() {
 
 export function getAudiobook(id: string) {
   return request<AudiobookDetailResponse>(`/api/audiobooks/${id}`);
+}
+
+export function putChapterProgress(
+  chapterId: string,
+  body: {
+    positionSeconds: number;
+    durationSeconds?: number | null;
+    completed?: boolean;
+  },
+) {
+  return request<ChapterProgressResponse>(`/api/chapters/${chapterId}/progress`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
 }
 
 export function createAudiobook(draft: AudiobookDraft) {

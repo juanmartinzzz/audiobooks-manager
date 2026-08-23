@@ -353,6 +353,28 @@ main {
   color: var(--text);
 }
 
+.chapter-card.finished .chapter-num {
+  padding-left: 22px;
+}
+
+.progress-sliver {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--moss), var(--gold));
+  pointer-events: none;
+}
+
+.finished-badge {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  color: var(--moss-bright);
+  z-index: 2;
+  display: flex;
+}
+
 .book-card .chapter-play {
   width: auto;
   padding: 0 10px;

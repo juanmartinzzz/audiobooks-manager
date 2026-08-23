@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Play, Plus, Settings, Trash2 } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Play, Plus, Settings, Trash2 } from "lucide-react";
 import { ChapterBulkUpload } from "../components/ChapterBulkUpload";
 import { Modal } from "../components/Modal";
 import { NowPlaying } from "../components/NowPlaying";
@@ -14,6 +14,7 @@ import {
   getAudiobook,
   audiobookCoverUrl,
   chapterAudioUrl,
+  putChapterProgress,
 } from "../lib/api";
 import { formatChapterAudioFacts } from "../lib/audioDuration";
 import {
@@ -25,8 +26,9 @@ import {
   type PlaybackPrefs,
   type PlaybackSettings,
 } from "../lib/playbackPrefs";
+import { isFinished, playedFraction, resumeSeconds } from "../lib/playbackProgress";
 import { toRoman } from "../lib/roman";
-import type { Audiobook, Chapter } from "../types";
+import type { Audiobook, Chapter, ChapterProgress } from "../types";
 
 export function AudiobookPage() {
   const { id } = useParams();
@@ -43,15 +45,21 @@ function AudiobookPageInner({ id }: { id: string }) {
   const [chapterTitle, setChapterTitle] = useState("");
   const [adding, setAdding] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [autoplay, setAutoplay] = useState(false);
+  const [resumeAt, setResumeAt] = useState<number | null>(null);
+  const [progressByChapter, setProgressByChapter] = useState<Record<string, ChapterProgress>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState(loadPlaybackSettings);
   const [prefs, setPrefs] = useState(loadPlaybackPrefs);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const progressRef = useRef(progressByChapter);
+  progressRef.current = progressByChapter;
 
   async function refresh(audiobookId: string) {
     const data = await getAudiobook(audiobookId);
     setAudiobook(data.audiobook);
     setChapters(data.chapters);
+    setProgressByChapter(Object.fromEntries((data.progress ?? []).map((item) => [item.chapterId, item])));
   }
 
   useEffect(() => {
@@ -61,6 +69,7 @@ function AudiobookPageInner({ id }: { id: string }) {
         if (cancelled) return;
         setAudiobook(data.audiobook);
         setChapters(data.chapters);
+        setProgressByChapter(Object.fromEntries((data.progress ?? []).map((item) => [item.chapterId, item])));
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : "Could not load audiobook");
@@ -110,9 +119,45 @@ function AudiobookPageInner({ id }: { id: string }) {
     savePlaybackPrefs(next);
   }
 
-  function activateChapter(chapter: Chapter, autoplay: boolean) {
-    setActiveId(chapter.id);
+  const onProgress = useCallback(
+    (payload: {
+      chapterId: string;
+      positionSeconds: number;
+      durationSeconds: number | null;
+      completed: boolean;
+    }) => {
+      const next: ChapterProgress = {
+        chapterId: payload.chapterId,
+        audiobookId: id,
+        positionSeconds: payload.positionSeconds,
+        durationSeconds: payload.durationSeconds,
+        completed: payload.completed,
+        updatedAt: Date.now(),
+      };
+      setProgressByChapter((current) => ({ ...current, [payload.chapterId]: next }));
+      void putChapterProgress(payload.chapterId, {
+        positionSeconds: payload.positionSeconds,
+        durationSeconds: payload.durationSeconds,
+        completed: payload.completed,
+      });
+    },
+    [id],
+  );
+
+  function activateChapter(chapter: Chapter, shouldAutoplay: boolean) {
     const audio = audioRef.current;
+    if (activeId === chapter.id) {
+      if (shouldAutoplay && chapter.audioAssetId) {
+        void audio?.play().catch(() => undefined);
+      }
+      return;
+    }
+    if (audio && activeId) {
+      audio.pause();
+    }
+    setResumeAt(resumeSeconds(progressRef.current[chapter.id], chapter.durationSeconds));
+    setAutoplay(shouldAutoplay);
+    setActiveId(chapter.id);
     if (!audio) return;
     if (!chapter.audioAssetId) {
       audio.pause();
@@ -124,11 +169,6 @@ function AudiobookPageInner({ id }: { id: string }) {
     if (audio.getAttribute("src") !== url) {
       audio.src = url;
     }
-    if (!autoplay) return;
-    void audio.play().catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : "Could not play this chapter";
-      setError(message);
-    });
   }
 
   function closePlayer() {
@@ -242,10 +282,14 @@ function AudiobookPageInner({ id }: { id: string }) {
           <p className="muted">No chapters yet. Drop audio files above, or add a title without a file.</p>
         ) : (
           <div className="grid">
-            {chapters.map((chapter) => (
+            {chapters.map((chapter) => {
+              const progress = progressByChapter[chapter.id];
+              const fraction = playedFraction(progress);
+              const finished = isFinished(progress);
+              return (
               <motion.div
                 key={chapter.id}
-                className={`chapter-card ${activeId === chapter.id ? "active" : ""}`}
+                className={`chapter-card ${activeId === chapter.id ? "active" : ""}${finished ? " finished" : ""}`}
                 data-roman={toRoman(chapter.position)}
                 role="button"
                 tabIndex={0}
@@ -259,6 +303,11 @@ function AudiobookPageInner({ id }: { id: string }) {
                   }
                 }}
               >
+                {finished ? (
+                  <span className="finished-badge" title="Finished">
+                    <CheckCircle2 size={15} />
+                  </span>
+                ) : null}
                 <span className="chapter-num mono">Chapter {String(chapter.position).padStart(2, "0")}</span>
                 <h3 className="chapter-title">{chapter.title}</h3>
                 <div className="chapter-meta">
@@ -291,8 +340,10 @@ function AudiobookPageInner({ id }: { id: string }) {
                     </button>
                   </div>
                 </div>
+                <div className="progress-sliver" style={{ width: `${(fraction * 100).toFixed(1)}%` }} />
               </motion.div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -303,7 +354,10 @@ function AudiobookPageInner({ id }: { id: string }) {
             chapters={chapters}
             settings={settings}
             prefs={prefs}
+            autoplay={autoplay}
+            resumeSeconds={resumeAt}
             onPrefsChange={onPrefsChange}
+            onProgress={onProgress}
             onSelectChapter={(chapterId) => {
               const next = chapters.find((item) => item.id === chapterId);
               if (next) activateChapter(next, true);

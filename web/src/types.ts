@@ -11,6 +11,18 @@ export type Audiobook = {
   updatedAt: number;
   chapterCount: number;
   hasCover: boolean;
+  completedChapterCount: number;
+  progressRatio: number;
+  lastPlayedChapterId: string | null;
+};
+
+export type ChapterProgress = {
+  chapterId: string;
+  audiobookId: string;
+  positionSeconds: number;
+  durationSeconds: number | null;
+  completed: boolean;
+  updatedAt: number;
 };
 
 export type Chapter = {

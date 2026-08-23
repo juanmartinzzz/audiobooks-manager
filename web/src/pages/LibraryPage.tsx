@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { BookOpen, Plus } from "lucide-react";
+import { BookOpen, CheckCircle2, Plus } from "lucide-react";
 import { NumericInput } from "../components/interaction/NumericInput";
 import { PillSelect } from "../components/interaction/PillSelect";
 import { SectionsCard, type SectionsCardSection } from "../components/interaction/SectionsCard";
@@ -266,9 +266,14 @@ export function LibraryPage() {
                   transition={{ delay: index * 0.03 }}
                 >
                   <Link
-                    className={`chapter-card book-card${book.hasCover ? " has-cover" : ""}`}
+                    className={`chapter-card book-card${book.hasCover ? " has-cover" : ""}${book.progressRatio > 0.96 && book.chapterCount > 0 ? " finished" : ""}`}
                     to={`/audiobooks/${book.id}`}
                   >
+                    {book.progressRatio > 0.96 && book.chapterCount > 0 ? (
+                      <span className="finished-badge" title="Finished">
+                        <CheckCircle2 size={15} />
+                      </span>
+                    ) : null}
                     {book.hasCover ? (
                       <img
                         className="book-cover"
@@ -286,9 +291,18 @@ export function LibraryPage() {
                     <div className="chapter-meta">
                       <span className="dur">
                         {book.chapterCount} {book.chapterCount === 1 ? "chapter" : "chapters"}
+                        {book.completedChapterCount > 0
+                          ? ` · ${book.completedChapterCount} done`
+                          : book.progressRatio > 0
+                            ? " · in progress"
+                            : ""}
                       </span>
                       <span className="chapter-play">Open</span>
                     </div>
+                    <div
+                      className="progress-sliver"
+                      style={{ width: `${(Math.min(1, book.progressRatio) * 100).toFixed(1)}%` }}
+                    />
                   </Link>
                 </motion.div>
               ))}

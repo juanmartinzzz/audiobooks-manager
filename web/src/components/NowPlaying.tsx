@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { Moon, Pause, Play, SkipBack, SkipForward, X } from "lucide-react";
 import { PillSelect } from "./interaction/PillSelect";
 import { formatPlaybackTime } from "../lib/audioDuration";
+import { completedFromPosition } from "../lib/playbackProgress";
 import {
   PLAYBACK_RATES,
   segmentLengthSeconds,
@@ -16,6 +17,8 @@ const SPEED_OPTIONS = PLAYBACK_RATES.map((rate) => ({
   label: `${rate}×`,
 }));
 
+const SAVE_INTERVAL_MS = 20_000;
+
 const SLEEP_OPTIONS = [
   { value: "off", label: "Off" },
   { value: "10", label: "10 min" },
@@ -28,13 +31,23 @@ const SLEEP_OPTIONS = [
 
 type SleepMode = "off" | "timer" | "chapter";
 
+type ProgressPayload = {
+  chapterId: string;
+  positionSeconds: number;
+  durationSeconds: number | null;
+  completed: boolean;
+};
+
 type Props = {
   audioRef: RefObject<HTMLAudioElement | null>;
   chapter: Chapter;
   chapters: Chapter[];
   settings: PlaybackSettings;
   prefs: PlaybackPrefs;
+  autoplay: boolean;
+  resumeSeconds: number | null;
   onPrefsChange: (prefs: PlaybackPrefs) => void;
+  onProgress: (payload: ProgressPayload) => void;
   onSelectChapter: (id: string) => void;
   onClose: () => void;
 };
@@ -45,7 +58,10 @@ export function NowPlaying({
   chapters,
   settings,
   prefs,
+  autoplay,
+  resumeSeconds,
   onPrefsChange,
+  onProgress,
   onSelectChapter,
   onClose,
 }: Props) {
@@ -57,6 +73,12 @@ export function NowPlaying({
   const chapterRef = useRef(chapter);
   const chaptersRef = useRef(chapters);
   const onSelectChapterRef = useRef(onSelectChapter);
+  const onProgressRef = useRef(onProgress);
+  const autoplayRef = useRef(autoplay);
+  const resumeSecondsRef = useRef(resumeSeconds);
+  const lastSaveAtRef = useRef(0);
+  const didResumeToastRef = useRef(false);
+  const didAutoplayRef = useRef(false);
   const sleepEndsAtRef = useRef<number | null>(null);
   const sleepChoiceRef = useRef("off");
 
@@ -72,6 +94,9 @@ export function NowPlaying({
   chapterRef.current = chapter;
   chaptersRef.current = chapters;
   onSelectChapterRef.current = onSelectChapter;
+  onProgressRef.current = onProgress;
+  autoplayRef.current = autoplay;
+  resumeSecondsRef.current = resumeSeconds;
   sleepChoiceRef.current = sleepChoice;
   const sleepMode: SleepMode =
     sleepChoice === "off" ? "off" : sleepChoice === "chapter" ? "chapter" : "timer";
@@ -174,9 +199,12 @@ export function NowPlaying({
 
   useEffect(() => {
     lastSeenSegmentRef.current = -1;
-    pendingSeekRef.current = null;
-    setCurrentTime(0);
-    setDuration(chapter.durationSeconds ?? 0);
+    lastSaveAtRef.current = 0;
+    didResumeToastRef.current = false;
+    didAutoplayRef.current = false;
+    pendingSeekRef.current = resumeSecondsRef.current;
+    setCurrentTime(resumeSecondsRef.current ?? 0);
+    setDuration(chapterRef.current.durationSeconds ?? 0);
     setPlaying(false);
     sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [chapter.id]);
@@ -193,24 +221,58 @@ export function NowPlaying({
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !hasAudio) return;
+    const chapterId = chapter.id;
+    const fallbackDuration = chapter.durationSeconds;
+
+    function emitProgress(options: { completed?: boolean; position?: number } = {}) {
+      const player = audioRef.current;
+      if (!player) return;
+      const now = Date.now();
+      const isChapterEnd = options.completed === true;
+      if (!isChapterEnd && now - lastSaveAtRef.current < SAVE_INTERVAL_MS) return;
+      lastSaveAtRef.current = now;
+      const duration =
+        Number.isFinite(player.duration) && player.duration > 0 ? player.duration : fallbackDuration;
+      const position = options.position ?? player.currentTime ?? 0;
+      const completed = options.completed ?? completedFromPosition(position, duration);
+      onProgressRef.current({
+        chapterId,
+        positionSeconds: position,
+        durationSeconds: duration,
+        completed,
+      });
+    }
 
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime || 0);
       maybePauseAtWaypoint(audio);
+      if (!audio.paused) emitProgress();
     };
     const onLoaded = () => {
       applyLoadedDuration(audio);
       if (pendingSeekRef.current != null) {
-        audio.currentTime = pendingSeekRef.current;
+        const resumeAt = pendingSeekRef.current;
+        audio.currentTime = resumeAt;
         pendingSeekRef.current = null;
+        if (resumeAt > 0 && !didResumeToastRef.current) {
+          didResumeToastRef.current = true;
+          showToast(`Resumed “${chapterRef.current.title}” at ${formatPlaybackTime(resumeAt)}`);
+        }
+      }
+      if (autoplayRef.current && !didAutoplayRef.current) {
+        didAutoplayRef.current = true;
+        void audio.play().catch((err: unknown) => {
+          showToast(err instanceof Error ? err.message : "Could not play this chapter");
+        });
       }
     };
     const onEnded = () => {
       setPlaying(false);
       setCurrentTime(0);
       lastSeenSegmentRef.current = -1;
+      emitProgress({ completed: true, position: 0 });
       if (sleepChoiceRef.current === "chapter") {
         showToast("Chapter’s end — resting here for the night");
         setSleepChoice("off");
@@ -238,6 +300,7 @@ export function NowPlaying({
     setPlaying(!audio.paused);
     if (!audio.paused) setCurrentTime(audio.currentTime || 0);
     applyLoadedDuration(audio);
+    if (audio.readyState >= 1) onLoaded();
 
     return () => {
       audio.removeEventListener("play", onPlay);

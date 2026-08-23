@@ -9,11 +9,13 @@ import {
 import type {
   Audiobook,
   AudiobookRecord,
+  AudiobookStatus,
   Chapter,
   ChapterProgress,
   ChapterRecord,
   CreateAudiobookInput,
   CreateChapterInput,
+  PatchAudiobookInput,
   SaveChapterProgressInput,
 } from "./types";
 
@@ -62,7 +64,7 @@ app.get("/api/audiobooks", async (c) => {
     c.env.DB.prepare(
       `SELECT
           a.id, a.title, a.subtitle, a.author, a.narrator,
-          a.series_title, a.series_index, a.description,
+          a.series_title, a.series_index, a.description, a.status,
           a.created_at, a.updated_at,
           COUNT(ch.id) AS chapter_count,
           EXISTS (
@@ -99,8 +101,8 @@ app.post("/api/audiobooks", async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO audiobooks (
         id, title, subtitle, author, narrator,
-        series_title, series_index, description, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        series_title, series_index, description, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
   )
     .bind(
       id,
@@ -183,14 +185,18 @@ app.patch("/api/audiobooks/:id", async (c) => {
   const existing = await loadAudiobook(c.env.DB, c.req.param("id"));
   if (!existing) return c.json({ error: "Audiobook not found" }, 404);
 
-  const body = await readJson<Partial<CreateAudiobookInput>>(c.req.raw);
+  const body = await readJson<PatchAudiobookInput>(c.req.raw);
   const title = body.title === undefined ? existing.title : requiredText(body.title, "title");
+  const status = body.status === undefined ? existing.status : parseAudiobookStatus(body.status);
+  if (status === "complete" && existing.chapterCount < 1) {
+    throw new HttpError("Add at least one chapter before marking this audiobook complete", 422);
+  }
   const now = Date.now();
 
   await c.env.DB.prepare(
     `UPDATE audiobooks SET
         title = ?, subtitle = ?, author = ?, narrator = ?,
-        series_title = ?, series_index = ?, description = ?, updated_at = ?
+        series_title = ?, series_index = ?, description = ?, status = ?, updated_at = ?
       WHERE id = ? AND removed_at IS NULL`,
   )
     .bind(
@@ -201,6 +207,7 @@ app.patch("/api/audiobooks/:id", async (c) => {
       body.seriesTitle === undefined ? existing.seriesTitle : optionalText(body.seriesTitle),
       body.seriesIndex === undefined ? existing.seriesIndex : optionalInt(body.seriesIndex),
       body.description === undefined ? existing.description : optionalText(body.description),
+      status,
       now,
       existing.id,
     )
@@ -235,6 +242,7 @@ app.delete("/api/audiobooks/:id", async (c) => {
 app.post("/api/audiobooks/:id/chapters", async (c) => {
   const audiobook = await loadAudiobook(c.env.DB, c.req.param("id"));
   if (!audiobook) return c.json({ error: "Audiobook not found" }, 404);
+  requireDraftAudiobook(audiobook);
 
   const body = await readJson<CreateChapterInput>(c.req.raw);
   const title = requiredText(body.title, "title");
@@ -258,6 +266,7 @@ app.post("/api/audiobooks/:id/chapters", async (c) => {
 app.put("/api/audiobooks/:id/chapters/audio", async (c) => {
   const audiobook = await loadAudiobook(c.env.DB, c.req.param("id"));
   if (!audiobook) return c.json({ error: "Audiobook not found" }, 404);
+  requireDraftAudiobook(audiobook);
 
   const title = requiredText(decodeHeader(c.req.header("X-Chapter-Title")), "title");
   const originalFilename = optionalText(decodeHeader(c.req.header("X-Original-Filename")));
@@ -307,6 +316,7 @@ app.put("/api/audiobooks/:id/chapters/audio", async (c) => {
 app.post("/api/audiobooks/:id/uploads", async (c) => {
   const audiobook = await loadAudiobook(c.env.DB, c.req.param("id"));
   if (!audiobook) return c.json({ error: "Audiobook not found" }, 404);
+  requireDraftAudiobook(audiobook);
 
   const body = await readJson<{ filename?: string; contentType?: string }>(c.req.raw);
   const originalFilename = optionalText(body.filename);
@@ -331,6 +341,7 @@ app.post("/api/audiobooks/:id/uploads", async (c) => {
 app.put("/api/audiobooks/:id/uploads/parts", async (c) => {
   const audiobook = await loadAudiobook(c.env.DB, c.req.param("id"));
   if (!audiobook) return c.json({ error: "Audiobook not found" }, 404);
+  requireDraftAudiobook(audiobook);
 
   const key = requiredText(decodeHeader(c.req.header("X-R2-Key")), "key");
   const uploadId = requiredText(decodeHeader(c.req.header("X-Upload-Id")), "uploadId");
@@ -357,6 +368,7 @@ app.put("/api/audiobooks/:id/uploads/parts", async (c) => {
 app.post("/api/audiobooks/:id/uploads/complete", async (c) => {
   const audiobook = await loadAudiobook(c.env.DB, c.req.param("id"));
   if (!audiobook) return c.json({ error: "Audiobook not found" }, 404);
+  requireDraftAudiobook(audiobook);
 
   const body = await readJson<{
     key?: string;
@@ -429,6 +441,9 @@ app.delete("/api/audiobooks/:id/uploads", async (c) => {
 app.patch("/api/chapters/:id", async (c) => {
   const existing = await loadChapter(c.env.DB, c.req.param("id"));
   if (!existing) return c.json({ error: "Chapter not found" }, 404);
+  const audiobook = await loadAudiobook(c.env.DB, existing.audiobookId);
+  if (!audiobook) return c.json({ error: "Audiobook not found" }, 404);
+  requireDraftAudiobook(audiobook);
 
   const body = await readJson<Partial<CreateChapterInput>>(c.req.raw);
   const title = body.title === undefined ? existing.title : requiredText(body.title, "title");
@@ -496,6 +511,9 @@ app.put("/api/chapters/:id/progress", async (c) => {
 app.delete("/api/chapters/:id", async (c) => {
   const existing = await loadChapter(c.env.DB, c.req.param("id"));
   if (!existing) return c.json({ error: "Chapter not found" }, 404);
+  const audiobook = await loadAudiobook(c.env.DB, existing.audiobookId);
+  if (!audiobook) return c.json({ error: "Audiobook not found" }, 404);
+  requireDraftAudiobook(audiobook);
   const now = Date.now();
   await c.env.DB.batch([
     c.env.DB.prepare(
@@ -572,6 +590,17 @@ class HttpError extends Error {
   constructor(message: string, status: 400 | 404 | 409 | 422) {
     super(message);
     this.status = status;
+  }
+}
+
+function parseAudiobookStatus(value: unknown): AudiobookStatus {
+  if (value === "draft" || value === "complete") return value;
+  throw new HttpError("status must be draft or complete", 400);
+}
+
+function requireDraftAudiobook(audiobook: Audiobook): void {
+  if (audiobook.status !== "draft") {
+    throw new HttpError("Reopen this audiobook as a draft to add or change chapters", 409);
   }
 }
 
@@ -966,7 +995,7 @@ async function loadAudiobook(db: D1Database, id: string): Promise<Audiobook | nu
     .prepare(
       `SELECT
           a.id, a.title, a.subtitle, a.author, a.narrator,
-          a.series_title, a.series_index, a.description,
+          a.series_title, a.series_index, a.description, a.status,
           a.created_at, a.updated_at,
           COUNT(ch.id) AS chapter_count,
           EXISTS (
@@ -1111,6 +1140,7 @@ function mapAudiobook(
     seriesTitle: row.series_title,
     seriesIndex: row.series_index,
     description: row.description,
+    status: row.status === "complete" ? "complete" : "draft",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     chapterCount: Number(row.chapter_count),

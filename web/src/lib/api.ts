@@ -1,4 +1,4 @@
-import type { Audiobook, AudiobookDraft, Chapter, ChapterProgress } from "../types";
+import type { Audiobook, AudiobookDraft, AudiobookStatus, Chapter, ChapterProgress } from "../types";
 import { durationFromAudioFile } from "./audioDuration";
 
 // Local `npm run dev` and production builds both call the production API.
@@ -78,6 +78,13 @@ export function createAudiobook(draft: AudiobookDraft) {
 
 export function deleteAudiobook(id: string) {
   return request<{ ok: true }>(`/api/audiobooks/${id}`, { method: "DELETE" });
+}
+
+export function updateAudiobookStatus(id: string, status: AudiobookStatus) {
+  return request<AudiobookResponse>(`/api/audiobooks/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
+  });
 }
 
 export function createChapter(audiobookId: string, title: string) {

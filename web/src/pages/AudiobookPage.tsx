@@ -15,6 +15,7 @@ import {
   audiobookCoverUrl,
   chapterAudioUrl,
   putChapterProgress,
+  updateAudiobookStatus,
 } from "../lib/api";
 import { formatChapterAudioFacts } from "../lib/audioDuration";
 import {
@@ -51,6 +52,7 @@ function AudiobookPageInner({ id }: { id: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState(loadPlaybackSettings);
   const [prefs, setPrefs] = useState(loadPlaybackPrefs);
+  const [statusSaving, setStatusSaving] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const progressRef = useRef(progressByChapter);
   progressRef.current = progressByChapter;
@@ -112,6 +114,30 @@ function AudiobookPageInner({ id }: { id: string }) {
     if (!confirmed) return;
     await deleteAudiobook(id);
     navigate("/");
+  }
+
+  async function onSetStatus(status: "draft" | "complete") {
+    if (!id) return;
+    if (status === "complete" && chapters.length === 0) return;
+    if (
+      status === "complete" &&
+      !window.confirm(
+        "Mark this book complete? Upload and chapter tools will hide until you reopen it as a draft.",
+      )
+    ) {
+      return;
+    }
+    setStatusSaving(true);
+    setError(null);
+    try {
+      await updateAudiobookStatus(id, status);
+      await refresh(id);
+      setSettingsOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update audiobook");
+    } finally {
+      setStatusSaving(false);
+    }
   }
 
   function onPrefsChange(next: PlaybackPrefs) {
@@ -202,9 +228,17 @@ function AudiobookPageInner({ id }: { id: string }) {
     );
   }
 
+  const isDraft = audiobook.status === "draft";
   const eyebrow = audiobook.seriesTitle
     ? `${audiobook.seriesTitle}${audiobook.seriesIndex ? ` · ${audiobook.seriesIndex}` : ""}`
     : "Standalone";
+  const subtitle =
+    audiobook.subtitle ??
+    (audiobook.author
+      ? `${audiobook.author}${audiobook.narrator ? ` · narrated by ${audiobook.narrator}` : ""}`
+      : isDraft
+        ? "Drop audio files to create chapters, or add a title without a file."
+        : null);
 
   return (
     <>
@@ -223,17 +257,28 @@ function AudiobookPageInner({ id }: { id: string }) {
                 <ArrowLeft size={16} />
                 Library
               </Link>
-              <p className="brand-eyebrow">{eyebrow}</p>
-              <h1 className="brand-title">{audiobook.title}</h1>
-              <p className="brand-sub">
-                {audiobook.subtitle ??
-                  (audiobook.author
-                    ? `${audiobook.author}${audiobook.narrator ? ` · narrated by ${audiobook.narrator}` : ""}`
-                    : "Drop audio files to create chapters, or add a title without a file.")}
+              <p className="brand-eyebrow">
+                {eyebrow}
+                {isDraft ? " · Draft" : ""}
               </p>
+              <h1 className="brand-title">{audiobook.title}</h1>
+              {subtitle ? <p className="brand-sub">{subtitle}</p> : null}
             </div>
           </div>
           <div className="header-actions">
+            {isDraft ? (
+              <PillButton
+                disabled={statusSaving || chapters.length === 0}
+                title={
+                  chapters.length === 0
+                    ? "Add at least one chapter before marking complete"
+                    : "Hide upload and chapter tools"
+                }
+                onClick={() => void onSetStatus("complete")}
+              >
+                {statusSaving ? "Saving…" : "Mark complete"}
+              </PillButton>
+            ) : null}
             <button
               type="button"
               className="icon-btn"
@@ -250,36 +295,44 @@ function AudiobookPageInner({ id }: { id: string }) {
       <main className="wrap">
         {error ? <p className="banner">{error}</p> : null}
 
-        <ChapterBulkUpload
-          audiobookId={id}
-          nextPosition={(chapters.at(-1)?.position ?? 0) + 1}
-          onUploaded={() => refresh(id)}
-        />
+        {isDraft ? (
+          <>
+            <ChapterBulkUpload
+              audiobookId={id}
+              nextPosition={(chapters.at(-1)?.position ?? 0) + 1}
+              onUploaded={() => refresh(id)}
+            />
 
-        <form
-          className="add-chapter"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void onAddChapter();
-          }}
-        >
-          <input
-            placeholder="Chapter title only (no audio yet)"
-            value={chapterTitle}
-            onChange={(event) => setChapterTitle(event.target.value)}
-          />
-          <PillButton type="submit" disabled={adding || chapterTitle.trim().length === 0}>
-            <Plus size={16} />
-            Add empty chapter
-          </PillButton>
-        </form>
+            <form
+              className="add-chapter"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onAddChapter();
+              }}
+            >
+              <input
+                placeholder="Chapter title only (no audio yet)"
+                value={chapterTitle}
+                onChange={(event) => setChapterTitle(event.target.value)}
+              />
+              <PillButton type="submit" disabled={adding || chapterTitle.trim().length === 0}>
+                <Plus size={16} />
+                Add empty chapter
+              </PillButton>
+            </form>
+          </>
+        ) : null}
 
         <p className="section-label">
           {chapters.length === 0 ? "Chapters" : `${chapters.length} chapters`}
         </p>
 
         {chapters.length === 0 ? (
-          <p className="muted">No chapters yet. Drop audio files above, or add a title without a file.</p>
+          <p className="muted">
+            {isDraft
+              ? "No chapters yet. Drop audio files above, or add a title without a file."
+              : "No chapters yet."}
+          </p>
         ) : (
           <div className="grid">
             {chapters.map((chapter) => {
@@ -327,17 +380,19 @@ function AudiobookPageInner({ id }: { id: string }) {
                     >
                       <Play size={12} />
                     </button>
-                    <button
-                      type="button"
-                      className="chapter-delete"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void onDeleteChapter(chapter.id);
-                      }}
-                      aria-label={`Delete ${chapter.title}`}
-                    >
-                      <Trash2 size={12} />
-                    </button>
+                    {isDraft ? (
+                      <button
+                        type="button"
+                        className="chapter-delete"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void onDeleteChapter(chapter.id);
+                        }}
+                        aria-label={`Delete ${chapter.title}`}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    ) : null}
                   </div>
                 </div>
                 <div className="progress-sliver" style={{ width: `${(fraction * 100).toFixed(1)}%` }} />
@@ -374,6 +429,8 @@ function AudiobookPageInner({ id }: { id: string }) {
           onSave={onSaveSettings}
           onClose={() => setSettingsOpen(false)}
           onDeleteBook={() => void onDeleteBook()}
+          onReopenDraft={isDraft ? undefined : () => void onSetStatus("draft")}
+          reopening={statusSaving}
         />
       ) : null}
     </>
@@ -385,11 +442,15 @@ function JourneySettingsModal({
   onSave,
   onClose,
   onDeleteBook,
+  onReopenDraft,
+  reopening,
 }: {
   settings: PlaybackSettings;
   onSave: (settings: PlaybackSettings) => void;
   onClose: () => void;
   onDeleteBook: () => void;
+  onReopenDraft?: () => void;
+  reopening?: boolean;
 }) {
   const [draft, setDraft] = useState(settings);
 
@@ -425,9 +486,16 @@ function JourneySettingsModal({
         />
       </div>
       <div className="modal-actions">
-        <PillButton variant="ghost" onClick={onDeleteBook}>
-          Delete audiobook
-        </PillButton>
+        <div className="modal-actions-secondary">
+          <PillButton variant="ghost" onClick={onDeleteBook}>
+            Delete audiobook
+          </PillButton>
+          {onReopenDraft ? (
+            <PillButton variant="ghost" disabled={reopening} onClick={onReopenDraft}>
+              {reopening ? "Reopening…" : "Reopen as draft"}
+            </PillButton>
+          ) : null}
+        </div>
         <PillButton onClick={() => onSave(draft)}>Done</PillButton>
       </div>
     </Modal>

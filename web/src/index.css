@@ -867,6 +867,13 @@ input[type="range"]::-webkit-slider-thumb {
   gap: 12px;
 }
 
+.modal-actions-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 :focus-visible {
   outline: 2px solid var(--gold-bright);
   outline-offset: 2px;

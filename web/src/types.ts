@@ -1,3 +1,5 @@
+export type AudiobookStatus = "draft" | "complete";
+
 export type Audiobook = {
   id: string;
   title: string;
@@ -7,6 +9,7 @@ export type Audiobook = {
   seriesTitle: string | null;
   seriesIndex: number | null;
   description: string | null;
+  status: AudiobookStatus;
   createdAt: number;
   updatedAt: number;
   chapterCount: number;

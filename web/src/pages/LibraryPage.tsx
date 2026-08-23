@@ -285,6 +285,7 @@ export function LibraryPage() {
                       {book.seriesTitle
                         ? `${book.seriesTitle}${book.seriesIndex ? ` · ${book.seriesIndex}` : ""}`
                         : "Standalone"}
+                      {book.status === "draft" ? " · Draft" : ""}
                     </span>
                     <h3 className="chapter-title">{book.title}</h3>
                     <p className="card-sub">{book.author ?? book.subtitle ?? "No author yet"}</p>

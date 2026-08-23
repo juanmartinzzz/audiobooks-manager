@@ -1,5 +1,7 @@
 export type AssetKind = "audio" | "cover";
 
+export type AudiobookStatus = "draft" | "complete";
+
 export type AudiobookRecord = {
   id: string;
   title: string;
@@ -9,6 +11,7 @@ export type AudiobookRecord = {
   series_title: string | null;
   series_index: number | null;
   description: string | null;
+  status: AudiobookStatus;
   created_at: number;
   updated_at: number;
   has_cover?: number;
@@ -39,6 +42,7 @@ export type Audiobook = {
   seriesTitle: string | null;
   seriesIndex: number | null;
   description: string | null;
+  status: AudiobookStatus;
   createdAt: number;
   updatedAt: number;
   chapterCount: number;
@@ -100,6 +104,10 @@ export type CreateAudiobookInput = {
   seriesTitle?: string | null;
   seriesIndex?: number | null;
   description?: string | null;
+};
+
+export type PatchAudiobookInput = Partial<CreateAudiobookInput> & {
+  status?: AudiobookStatus;
 };
 
 export type CreateChapterInput = {

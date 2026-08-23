@@ -61,9 +61,20 @@ function draftsFromFiles(files: File[]): ChapterDraft[] {
   });
 }
 
+function positionOnGrid(
+  startPosition: number,
+  drafts: readonly { id: string }[],
+  draftId: string,
+): number | undefined {
+  const index = drafts.findIndex((draft) => draft.id === draftId);
+  if (index < 0) return undefined;
+  return startPosition + index;
+}
+
 export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [drafts, setDrafts] = useState<ChapterDraft[]>([]);
+  const [startPosition, setStartPosition] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [skipped, setSkipped] = useState(0);
   const [uploadingAll, setUploadingAll] = useState(false);
@@ -109,6 +120,7 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
     const audio = incoming.filter(isAudioFile);
     setSkipped(incoming.length - audio.length);
     if (audio.length === 0) return;
+    if (drafts.length === 0) setStartPosition(nextPosition);
     setDrafts((current) => [...current, ...draftsFromFiles(audio)]);
   }
 
@@ -127,7 +139,28 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
     setDrafts((current) => current.map((draft) => (draft.id === id ? { ...draft, ...patch } : draft)));
   }
 
-  async function uploadDraft(draft: ChapterDraft, position?: number) {
+  function gridPosition(draftId: string): number | undefined {
+    return positionOnGrid(startPosition ?? nextPosition, drafts, draftId);
+  }
+
+  function clearDrafts() {
+    setDrafts([]);
+    setStartPosition(null);
+    setStripText("");
+    setSnippetsExpanded(false);
+  }
+
+  function removeDraft(draftId: string) {
+    const remaining = drafts.filter((item) => item.id !== draftId);
+    setDrafts(remaining);
+    if (remaining.length === 0) {
+      setStartPosition(null);
+      setStripText("");
+      setSnippetsExpanded(false);
+    }
+  }
+
+  async function uploadDraft(draft: ChapterDraft, position: number) {
     if (draft.title.trim().length === 0) return;
     if (draft.file.size > MAX_AUDIO_BYTES) {
       setDraft(draft.id, { status: "error", error: "File is over 512 MB" });
@@ -158,7 +191,10 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
     setUploadingAll(true);
     try {
       await runPool(
-        toUpload.map((draft, index) => ({ draft, position: nextPosition + index })),
+        toUpload.flatMap((draft) => {
+          const position = gridPosition(draft.id);
+          return position === undefined ? [] : [{ draft, position }];
+        }),
         UPLOAD_CONCURRENCY,
         async ({ draft, position }) => {
           await uploadDraft(draft, position);
@@ -201,7 +237,7 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
     {
       id: "files",
       title: "Files",
-      description: "Drop several files at once. Order follows the filenames.",
+      description: "Drop several files at once. Grid order is chapter order, even if you upload one file at a time.",
       columns: [drop],
     },
   ];
@@ -331,11 +367,7 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
                 <PillButton
                   variant="ghost"
                   disabled={busy}
-                  onClick={() => {
-                    setDrafts([]);
-                    setStripText("");
-                    setSnippetsExpanded(false);
-                  }}
+                  onClick={clearDrafts}
                 >
                   Discard
                 </PillButton>
@@ -394,7 +426,7 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
                     <PillButton
                       variant="ghost"
                       disabled={busy}
-                      onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}
+                      onClick={() => removeDraft(draft.id)}
                     >
                       Remove
                     </PillButton>
@@ -407,7 +439,11 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
                       draft.status === "uploading" ||
                       draft.file.size > MAX_AUDIO_BYTES
                     }
-                    onClick={() => void uploadDraft(draft)}
+                    onClick={() => {
+                      const position = gridPosition(draft.id);
+                      if (position === undefined) return;
+                      void uploadDraft(draft, position);
+                    }}
                   >
                     {draft.status === "done"
                       ? "Uploaded"

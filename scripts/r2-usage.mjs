@@ -6,8 +6,8 @@
  *   npm run r2:usage -- --from 2026-08-01 --to 2026-08-31
  *   npm run r2:usage -- --json
  *
- * Needs CLOUDFLARE_API_TOKEN. CLOUDFLARE_ACCOUNT_ID is optional if the token
- * can see exactly one account. Does not print secrets.
+ * Object counts come from a live R2 list. Class A/B come from GraphQL
+ * analytics for the selected window. Needs CLOUDFLARE_API_TOKEN.
  */
 const API = "https://api.cloudflare.com/client/v4";
 
@@ -175,6 +175,44 @@ async function resolveAccountId(token, configured) {
   );
 }
 
+async function listBucketNames(token, accountId) {
+  const { json } = await cfGet(token, `/accounts/${accountId}/r2/buckets`);
+  if (!json.success) {
+    throw new Error(
+      `Could not list buckets: ${json.errors?.[0]?.message ?? "unknown error"}`,
+    );
+  }
+  const buckets = json.result?.buckets ?? json.result ?? [];
+  if (!Array.isArray(buckets)) return [];
+  return buckets.map((b) => b.name).filter(Boolean);
+}
+
+async function listBucketStorage(token, accountId, bucketName) {
+  let cursor = null;
+  let objectCount = 0;
+  let payloadSize = 0;
+  do {
+    const params = new URLSearchParams({ per_page: "1000" });
+    if (cursor) params.set("cursor", cursor);
+    const path = `/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?${params}`;
+    const { status, json } = await cfGet(token, path);
+    if (!json.success) {
+      throw new Error(
+        `Could not list objects in ${bucketName} (${status}): ${json.errors?.[0]?.message ?? "unknown error"}`,
+      );
+    }
+    const objects = Array.isArray(json.result) ? json.result : [];
+    for (const object of objects) {
+      objectCount += 1;
+      payloadSize += Number(object.size ?? 0);
+    }
+    const info = json.result_info ?? {};
+    cursor = info.is_truncated ? info.cursor || null : null;
+    if (!objects.length) break;
+  } while (cursor);
+  return { objectCount, payloadSize };
+}
+
 const OPS_QUERY = `
 query R2Ops($accountTag: string!, $startDate: Time, $endDate: Time) {
   viewer {
@@ -185,23 +223,6 @@ query R2Ops($accountTag: string!, $startDate: Time, $endDate: Time) {
       ) {
         sum { requests }
         dimensions { actionType bucketName }
-      }
-    }
-  }
-}
-`;
-
-const STORAGE_QUERY = `
-query R2Storage($accountTag: string!, $startDate: Time, $endDate: Time) {
-  viewer {
-    accounts(filter: { accountTag: $accountTag }) {
-      r2StorageAdaptiveGroups(
-        limit: 10000
-        filter: { datetime_geq: $startDate, datetime_leq: $endDate }
-        orderBy: [datetime_DESC]
-      ) {
-        max { objectCount payloadSize metadataSize }
-        dimensions { datetime bucketName }
       }
     }
   }
@@ -232,19 +253,22 @@ async function main() {
   const startDate = from.toISOString();
   const endDate = to.toISOString();
 
-  const [opsBody, storageBody, billing] = await Promise.all([
+  const [opsBody, billing, bucketNames] = await Promise.all([
     gql(token, OPS_QUERY, { accountTag: accountId, startDate, endDate }),
-    gql(token, STORAGE_QUERY, { accountTag: accountId, startDate, endDate }),
     cfGet(token, `/accounts/${accountId}/billable-usage`).catch((err) => ({
       status: 0,
       json: { success: false, errors: [{ message: err.message }] },
     })),
+    listBucketNames(token, accountId),
   ]);
+
+  const liveByBucket = {};
+  for (const name of bucketNames) {
+    liveByBucket[name] = await listBucketStorage(token, accountId, name);
+  }
 
   const opGroups =
     opsBody.data?.viewer?.accounts?.[0]?.r2OperationsAdaptiveGroups ?? [];
-  const storageGroups =
-    storageBody.data?.viewer?.accounts?.[0]?.r2StorageAdaptiveGroups ?? [];
 
   const byClass = { A: 0, B: 0, free: 0, other: 0 };
   const byAction = {};
@@ -262,20 +286,8 @@ async function main() {
     byBucket[bucket].total += n;
   }
 
-  const latestByBucket = {};
-  for (const group of storageGroups) {
-    const bucket = group.dimensions?.bucketName || "(account)";
-    if (latestByBucket[bucket]) continue;
-    latestByBucket[bucket] = {
-      datetime: group.dimensions?.datetime,
-      objectCount: group.max?.objectCount ?? 0,
-      payloadSize: group.max?.payloadSize ?? 0,
-      metadataSize: group.max?.metadataSize ?? 0,
-    };
-  }
-
-  const storageBytes = Object.values(latestByBucket).reduce(
-    (sum, row) => sum + (row.payloadSize || 0) + (row.metadataSize || 0),
+  const storageBytes = Object.values(liveByBucket).reduce(
+    (sum, row) => sum + (row.payloadSize || 0),
     0,
   );
 
@@ -297,7 +309,7 @@ async function main() {
     },
     byAction,
     byBucket,
-    latestByBucket,
+    liveByBucket,
     billableUsage: {
       ok: Boolean(billing.json.success),
       status: billing.status,
@@ -313,7 +325,7 @@ async function main() {
   console.log("R2 usage vs Standard free tier");
   console.log(`Account ${accountId}`);
   console.log(
-    `Window  ${startDate} → ${endDate} (UTC calendar month unless overridden)\n`,
+    `Window  ${startDate} → ${endDate} (ops are UTC calendar month unless overridden)\n`,
   );
 
   printTable(
@@ -341,22 +353,20 @@ async function main() {
     ],
   );
 
-  const bucketNames = [
-    ...new Set([...Object.keys(latestByBucket), ...Object.keys(byBucket)]),
+  const names = [
+    ...new Set([...bucketNames, ...Object.keys(byBucket)]),
   ].sort();
-  if (bucketNames.length) {
+  if (names.length) {
     console.log("");
     printTable(
       ["Bucket", "Objects", "Stored", "Class A", "Class B"],
-      bucketNames.map((name) => {
-        const storage = latestByBucket[name];
+      names.map((name) => {
+        const storage = liveByBucket[name];
         const ops = byBucket[name] || { A: 0, B: 0 };
         return [
           name,
           storage ? formatCount(storage.objectCount) : "—",
-          storage
-            ? formatBytes((storage.payloadSize || 0) + (storage.metadataSize || 0))
-            : "—",
+          storage ? formatBytes(storage.payloadSize || 0) : "—",
           formatCount(ops.A),
           formatCount(ops.B),
         ];
@@ -374,13 +384,16 @@ async function main() {
   }
 
   console.log("");
+  console.log(
+    "Object counts are a live R2 listing, not delayed GraphQL storage metrics.",
+  );
   if (report.billableUsage.ok) {
     console.log(
       "Billable Usage API: available (invoice-accurate remaining allowance).",
     );
   } else {
     console.log(
-      "Billable Usage API: unavailable (token needs Billing Read). Storage is a live snapshot, not GB-month.",
+      "Billable Usage API: unavailable (token needs Billing Read). Storage is bytes on disk, not GB-month.",
     );
   }
 }

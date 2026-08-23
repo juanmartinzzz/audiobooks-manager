@@ -1,6 +1,7 @@
 import type { Audiobook, AudiobookDraft, Chapter } from "../types";
 
-const base = import.meta.env.DEV ? "" : (import.meta.env.VITE_API_URL ?? "");
+// Local `npm run dev` and production builds both call the production API.
+const base = import.meta.env.VITE_API_URL ?? "";
 
 export const DIRECT_PUT_MAX_BYTES = 99 * 1024 * 1024;
 export const MAX_AUDIO_BYTES = 512 * 1024 * 1024;

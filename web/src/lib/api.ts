@@ -1,4 +1,5 @@
 import type { Audiobook, AudiobookDraft, AudiobookStatus, Chapter, ChapterProgress } from "../types";
+import { loadAppPassword } from "./appPassword";
 import { durationFromAudioFile } from "./audioDuration";
 
 // Local `npm run dev` and production builds both call the production API.
@@ -22,17 +23,38 @@ export class ApiError extends Error {
   }
 }
 
+function applyAuthHeader(headers: Headers): void {
+  const password = loadAppPassword().trim();
+  if (password) headers.set("X-App-Password", password);
+}
+
+function withAuthQuery(url: string): string {
+  const password = loadAppPassword().trim();
+  if (!password) return url;
+  const join = url.includes("?") ? "&" : "?";
+  return `${url}${join}password=${encodeURIComponent(password)}`;
+}
+
+function errorMessage(status: number, fallback: string): string {
+  if (status === 401) return "Password missing or incorrect";
+  return fallback;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  applyAuthHeader(headers);
 
   const response = await fetch(`${base}${path}`, { ...init, headers });
   const payload = (await response.json().catch(() => ({}))) as { error?: string } & T;
 
   if (!response.ok) {
-    throw new ApiError(payload.error ?? `Request failed (${response.status})`, response.status);
+    throw new ApiError(
+      errorMessage(response.status, payload.error ?? `Request failed (${response.status})`),
+      response.status,
+    );
   }
 
   return payload;
@@ -40,11 +62,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function audiobookCoverUrl(id: string, updatedAt?: number): string {
   const version = updatedAt != null ? `?v=${updatedAt}` : "";
-  return `${base}/api/audiobooks/${id}/cover${version}`;
+  return withAuthQuery(`${base}/api/audiobooks/${id}/cover${version}`);
 }
 
 export function chapterAudioUrl(id: string): string {
-  return `${base}/api/chapters/${id}/audio`;
+  return withAuthQuery(`${base}/api/chapters/${id}/audio`);
 }
 
 export function listAudiobooks() {
@@ -226,7 +248,10 @@ function xhrJson<T>(
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open(method, `${base}${path}`);
-    for (const [name, value] of Object.entries(input.headers)) {
+    const headers = { ...input.headers };
+    const password = loadAppPassword().trim();
+    if (password) headers["X-App-Password"] = password;
+    for (const [name, value] of Object.entries(headers)) {
       xhr.setRequestHeader(name, value);
     }
 
@@ -237,7 +262,12 @@ function xhrJson<T>(
     xhr.onload = () => {
       const payload = parseJson<{ error?: string } & T>(xhr.responseText);
       if (xhr.status < 200 || xhr.status >= 300) {
-        reject(new ApiError(payload.error ?? `Request failed (${xhr.status})`, xhr.status));
+        reject(
+          new ApiError(
+            errorMessage(xhr.status, payload.error ?? `Request failed (${xhr.status})`),
+            xhr.status,
+          ),
+        );
         return;
       }
       resolve(payload as T);

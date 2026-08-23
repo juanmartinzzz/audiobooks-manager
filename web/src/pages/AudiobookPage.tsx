@@ -27,6 +27,7 @@ import {
   type PlaybackPrefs,
   type PlaybackSettings,
 } from "../lib/playbackPrefs";
+import { useAppPassword } from "../components/AppPasswordBar";
 import { isFinished, playedFraction, resumeSeconds } from "../lib/playbackProgress";
 import { toRoman } from "../lib/roman";
 import type { Audiobook, Chapter, ChapterProgress } from "../types";
@@ -39,6 +40,7 @@ export function AudiobookPage() {
 
 function AudiobookPageInner({ id }: { id: string }) {
   const navigate = useNavigate();
+  const { activePassword } = useAppPassword();
   const [audiobook, setAudiobook] = useState<Audiobook | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +68,8 @@ function AudiobookPageInner({ id }: { id: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
     getAudiobook(id)
       .then((data) => {
         if (cancelled) return;
@@ -74,7 +78,11 @@ function AudiobookPageInner({ id }: { id: string }) {
         setProgressByChapter(Object.fromEntries((data.progress ?? []).map((item) => [item.chapterId, item])));
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load audiobook");
+        if (!cancelled) {
+          setAudiobook(null);
+          setChapters([]);
+          setError(err instanceof Error ? err.message : "Could not load audiobook");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -82,7 +90,7 @@ function AudiobookPageInner({ id }: { id: string }) {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, activePassword]);
 
   const active = chapters.find((chapter) => chapter.id === activeId) ?? null;
 

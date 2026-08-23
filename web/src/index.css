@@ -82,6 +82,24 @@ header.top {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 70%);
 }
 
+.app-password-bar {
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+  padding: 12px 0;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.app-password-bar-inner {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.app-password-field {
+  width: min(100%, 22rem);
+}
+
 .header-row {
   display: flex;
   justify-content: space-between;

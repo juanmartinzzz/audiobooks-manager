@@ -52,10 +52,27 @@ app.use(
       "X-R2-Key",
       "X-Upload-Id",
       "X-Part-Number",
+      "X-App-Password",
     ],
     exposeHeaders: ["Accept-Ranges", "Content-Range", "Content-Length", "Content-Type", "ETag"],
   }),
 );
+
+app.use("*", async (c, next) => {
+  if (c.req.method === "OPTIONS") return next();
+
+  const expected = c.env.APP_PASSWORD?.trim() ?? "";
+  if (!expected) {
+    return c.json({ error: "Server password is not configured" }, 500);
+  }
+
+  const provided = (c.req.header("X-App-Password") ?? c.req.query("password") ?? "").trim();
+  if (!passwordMatches(provided, expected)) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  await next();
+});
 
 app.get("/api/health", (c) => c.json({ ok: true }));
 
@@ -586,11 +603,22 @@ app.notFound((c) => c.json({ error: "Not found" }, 404));
 export default app;
 
 class HttpError extends Error {
-  status: 400 | 404 | 409 | 422;
-  constructor(message: string, status: 400 | 404 | 409 | 422) {
+  status: 400 | 401 | 404 | 409 | 422;
+  constructor(message: string, status: 400 | 401 | 404 | 409 | 422) {
     super(message);
     this.status = status;
   }
+}
+
+function passwordMatches(provided: string, expected: string): boolean {
+  const encoder = new TextEncoder();
+  const providedBytes = encoder.encode(provided);
+  const expectedBytes = encoder.encode(expected);
+  if (providedBytes.byteLength !== expectedBytes.byteLength) {
+    crypto.subtle.timingSafeEqual(providedBytes, providedBytes);
+    return false;
+  }
+  return crypto.subtle.timingSafeEqual(providedBytes, expectedBytes);
 }
 
 function parseAudiobookStatus(value: unknown): AudiobookStatus {

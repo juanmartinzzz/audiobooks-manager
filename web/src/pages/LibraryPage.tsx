@@ -8,6 +8,7 @@ import { SectionsCard, type SectionsCardSection } from "../components/interactio
 import { TextArea, TextInput } from "../components/interaction/TextInput";
 import { PillButton } from "../components/PillButton";
 import { createAudiobook, listAudiobooks, audiobookCoverUrl } from "../lib/api";
+import { useAppPassword } from "../components/AppPasswordBar";
 import { emptyAudiobookDraft, type Audiobook, type AudiobookDraft } from "../types";
 
 const PLACEMENT_OPTIONS = [
@@ -17,6 +18,7 @@ const PLACEMENT_OPTIONS = [
 
 export function LibraryPage() {
   const navigate = useNavigate();
+  const { activePassword } = useAppPassword();
   const [audiobooks, setAudiobooks] = useState<Audiobook[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,12 +35,17 @@ export function LibraryPage() {
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
     listAudiobooks()
       .then((data) => {
         if (!cancelled) setAudiobooks(data.audiobooks);
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Could not load library");
+        if (!cancelled) {
+          setAudiobooks([]);
+          setError(err instanceof Error ? err.message : "Could not load library");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -46,7 +53,7 @@ export function LibraryPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activePassword]);
 
   function openCreate() {
     setError(null);

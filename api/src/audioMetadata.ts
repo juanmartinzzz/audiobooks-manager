@@ -35,12 +35,6 @@ type MutableFacts = {
   vbr: boolean;
 };
 
-type WorkerDigestStream = WritableStream<Uint8Array> & { digest: Promise<ArrayBuffer> };
-
-type WorkerCrypto = Crypto & {
-  DigestStream?: new (algorithm: string) => WorkerDigestStream;
-};
-
 export function normalizeDurationSeconds(value: number): number | null {
   if (!Number.isFinite(value) || value <= 0 || value > MAX_DURATION_SECONDS) return null;
   return value;
@@ -72,24 +66,14 @@ export async function inspectR2Audio(
   key: string,
   input: { sizeBytes: number; filename: string | null },
 ): Promise<{ facts: AudioFacts; checksum: string | null }> {
-  const [facts, checksum] = await Promise.all([
-    factsFromR2Object(bucket, key, input),
-    checksumFromR2Object(bucket, key),
-  ]);
-  return { facts, checksum };
-}
-
-export async function factsFromR2Object(
-  bucket: R2Bucket,
-  key: string,
-  input: { sizeBytes: number; filename: string | null },
-): Promise<AudioFacts> {
   const empty = emptyFacts();
-  if (!Number.isFinite(input.sizeBytes) || input.sizeBytes <= 0) return empty;
+  if (!Number.isFinite(input.sizeBytes) || input.sizeBytes <= 0) {
+    return { facts: empty, checksum: null };
+  }
   try {
     const headLength = Math.min(HEAD_BYTES, input.sizeBytes);
     let head = await readRange(bucket, key, 0, headLength);
-    if (!head) return empty;
+    if (!head) return { facts: empty, checksum: null };
 
     const id3Bytes = id3TagLength(head);
     if (id3Bytes > head.length && id3Bytes <= MAX_HEAD_BYTES && id3Bytes <= input.sizeBytes) {
@@ -103,20 +87,12 @@ export async function factsFromR2Object(
       tail = await readRange(bucket, key, input.sizeBytes - tailLength, tailLength);
     }
 
-    return parseAudioFacts(head, tail, input);
+    return {
+      facts: parseAudioFacts(head, tail, input),
+      checksum: await checksumFromSamples(input.sizeBytes, head, tail),
+    };
   } catch {
-    return empty;
-  }
-}
-
-export async function checksumFromR2Object(bucket: R2Bucket, key: string): Promise<string | null> {
-  try {
-    const object = await bucket.get(key);
-    if (!object?.body) return null;
-    const digest = await sha256Stream(object.body);
-    return digest ? hex(digest) : null;
-  } catch {
-    return null;
+    return { facts: empty, checksum: null };
   }
 }
 
@@ -189,14 +165,23 @@ async function readRange(
   return new Uint8Array(await object.arrayBuffer());
 }
 
-async function sha256Stream(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer | null> {
-  const workerCrypto = crypto as WorkerCrypto;
-  if (workerCrypto.DigestStream) {
-    const digestStream = new workerCrypto.DigestStream("SHA-256");
-    await stream.pipeTo(digestStream);
-    return digestStream.digest;
+async function checksumFromSamples(
+  sizeBytes: number,
+  head: Uint8Array,
+  tail: Uint8Array | null,
+): Promise<string | null> {
+  try {
+    const tailBytes = tail ?? new Uint8Array(0);
+    const packed = new Uint8Array(8 + head.length + tailBytes.length);
+    const view = new DataView(packed.buffer);
+    view.setUint32(0, Math.floor(sizeBytes / 0x1_0000_0000));
+    view.setUint32(4, sizeBytes >>> 0);
+    packed.set(head, 8);
+    packed.set(tailBytes, 8 + head.length);
+    return hex(await crypto.subtle.digest("SHA-256", packed));
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function averageBitrate(sizeBytes: number, durationSeconds: number | null): number | null {

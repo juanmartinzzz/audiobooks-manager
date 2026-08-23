@@ -1,6 +1,10 @@
 import type { Audiobook, AudiobookDraft, Chapter } from "../types";
 
-const base = import.meta.env.VITE_API_URL ?? "";
+const base = import.meta.env.DEV ? "" : (import.meta.env.VITE_API_URL ?? "");
+
+export const DIRECT_PUT_MAX_BYTES = 99 * 1024 * 1024;
+export const MAX_AUDIO_BYTES = 512 * 1024 * 1024;
+const PART_SIZE = 10 * 1024 * 1024;
 
 type AudiobookListResponse = { audiobooks: Audiobook[] };
 type AudiobookResponse = { audiobook: Audiobook };
@@ -59,6 +63,160 @@ export function createChapter(audiobookId: string, title: string) {
 
 export function deleteChapter(id: string) {
   return request<{ ok: true }>(`/api/chapters/${id}`, { method: "DELETE" });
+}
+
+export function uploadChapterAudio(
+  audiobookId: string,
+  input: {
+    file: File;
+    title: string;
+    position?: number;
+    onProgress?: (ratio: number) => void;
+  },
+): Promise<ChapterResponse> {
+  if (input.file.size > MAX_AUDIO_BYTES) {
+    return Promise.reject(new ApiError("Audio files must be under 512 MB", 400));
+  }
+  if (input.file.size <= DIRECT_PUT_MAX_BYTES) {
+    return uploadDirect(audiobookId, input);
+  }
+  return uploadMultipart(audiobookId, input);
+}
+
+function uploadDirect(
+  audiobookId: string,
+  input: {
+    file: File;
+    title: string;
+    position?: number;
+    onProgress?: (ratio: number) => void;
+  },
+): Promise<ChapterResponse> {
+  return xhrJson<ChapterResponse>("PUT", `/api/audiobooks/${audiobookId}/chapters/audio`, {
+    body: input.file,
+    headers: {
+      "Content-Type": input.file.type || "application/octet-stream",
+      "X-Chapter-Title": encodeURIComponent(input.title),
+      "X-Original-Filename": encodeURIComponent(input.file.name),
+      ...(input.position !== undefined ? { "X-Chapter-Position": String(input.position) } : {}),
+    },
+    onProgress: input.onProgress,
+  });
+}
+
+async function uploadMultipart(
+  audiobookId: string,
+  input: {
+    file: File;
+    title: string;
+    position?: number;
+    onProgress?: (ratio: number) => void;
+  },
+): Promise<ChapterResponse> {
+  const session = await request<{ key: string; uploadId: string; assetId: string }>(
+    `/api/audiobooks/${audiobookId}/uploads`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        filename: input.file.name,
+        contentType: input.file.type || "application/octet-stream",
+      }),
+    },
+  );
+
+  const partCount = Math.ceil(input.file.size / PART_SIZE);
+  const parts: { partNumber: number; etag: string }[] = [];
+
+  try {
+    for (let index = 0; index < partCount; index += 1) {
+      const start = index * PART_SIZE;
+      const chunk = input.file.slice(start, start + PART_SIZE);
+      const part = await xhrJson<{ partNumber: number; etag: string }>(
+        "PUT",
+        `/api/audiobooks/${audiobookId}/uploads/parts`,
+        {
+          body: chunk,
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "X-R2-Key": encodeURIComponent(session.key),
+            "X-Upload-Id": encodeURIComponent(session.uploadId),
+            "X-Part-Number": String(index + 1),
+          },
+          onProgress: (ratio) => {
+            const bytes = start + ratio * chunk.size;
+            input.onProgress?.(bytes / input.file.size);
+          },
+        },
+      );
+      parts.push(part);
+    }
+
+    const result = await request<ChapterResponse>(`/api/audiobooks/${audiobookId}/uploads/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        key: session.key,
+        uploadId: session.uploadId,
+        assetId: session.assetId,
+        title: input.title,
+        filename: input.file.name,
+        contentType: input.file.type || "application/octet-stream",
+        sizeBytes: input.file.size,
+        position: input.position,
+        parts,
+      }),
+    });
+    input.onProgress?.(1);
+    return result;
+  } catch (err) {
+    await request<{ ok: true }>(`/api/audiobooks/${audiobookId}/uploads`, {
+      method: "DELETE",
+      body: JSON.stringify({ key: session.key, uploadId: session.uploadId }),
+    }).catch(() => undefined);
+    throw err;
+  }
+}
+
+function xhrJson<T>(
+  method: string,
+  path: string,
+  input: {
+    body: Blob;
+    headers: Record<string, string>;
+    onProgress?: (ratio: number) => void;
+  },
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, `${base}${path}`);
+    for (const [name, value] of Object.entries(input.headers)) {
+      xhr.setRequestHeader(name, value);
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) input.onProgress?.(event.loaded / event.total);
+    };
+
+    xhr.onload = () => {
+      const payload = parseJson<{ error?: string } & T>(xhr.responseText);
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new ApiError(payload.error ?? `Request failed (${xhr.status})`, xhr.status));
+        return;
+      }
+      resolve(payload as T);
+    };
+
+    xhr.onerror = () => reject(new ApiError("Upload failed", 0));
+    xhr.onabort = () => reject(new ApiError("Upload cancelled", 0));
+    xhr.send(input.body);
+  });
+}
+
+function parseJson<T>(raw: string): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return {} as T;
+  }
 }
 
 function toAudiobookPayload(draft: AudiobookDraft) {

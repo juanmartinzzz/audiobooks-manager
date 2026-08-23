@@ -51,6 +51,19 @@ export type Chapter = {
   updatedAt: number;
 };
 
+export type Asset = {
+  id: string;
+  audiobookId: string;
+  r2Key: string;
+  kind: AssetKind;
+  contentType: string | null;
+  sizeBytes: number | null;
+  durationSeconds: number | null;
+  originalFilename: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type CreateAudiobookInput = {
   title: string;
   subtitle?: string | null;

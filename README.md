@@ -1,6 +1,6 @@
 # Audiobooks Manager
 
-Vite + React frontend and a Cloudflare Worker API. D1 holds audiobook records; R2 will hold audio files later.
+Vite + React frontend and a Cloudflare Worker API. D1 holds audiobook records; chapter audio files go to R2 after you confirm names. Files over 99 MB are uploaded in chunks and joined in R2.
 
 ```bash
 npm install

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Play, Plus, Settings, SkipBack, SkipForward, Trash2 } from "lucide-react";
+import { ChapterBulkUpload } from "../components/ChapterBulkUpload";
 import { Modal } from "../components/Modal";
 import { PillButton } from "../components/PillButton";
 import { createChapter, deleteAudiobook, deleteChapter, getAudiobook } from "../lib/api";
@@ -120,7 +121,7 @@ function AudiobookPageInner({ id }: { id: string }) {
               {audiobook.subtitle ??
                 (audiobook.author
                   ? `${audiobook.author}${audiobook.narrator ? ` · narrated by ${audiobook.narrator}` : ""}`
-                  : "Add chapters, then audio later.")}
+                  : "Drop audio files to create chapters, or add a title without a file.")}
             </p>
           </div>
           <div className="header-actions">
@@ -140,6 +141,12 @@ function AudiobookPageInner({ id }: { id: string }) {
       <main className="wrap">
         {error ? <p className="banner">{error}</p> : null}
 
+        <ChapterBulkUpload
+          audiobookId={id}
+          nextPosition={(chapters.at(-1)?.position ?? 0) + 1}
+          onUploaded={() => refresh(id)}
+        />
+
         <form
           className="add-chapter"
           onSubmit={(event) => {
@@ -148,13 +155,13 @@ function AudiobookPageInner({ id }: { id: string }) {
           }}
         >
           <input
-            placeholder="Chapter title"
+            placeholder="Chapter title only (no audio yet)"
             value={chapterTitle}
             onChange={(event) => setChapterTitle(event.target.value)}
           />
           <PillButton type="submit" disabled={adding || chapterTitle.trim().length === 0}>
             <Plus size={16} />
-            Add chapter
+            Add empty chapter
           </PillButton>
         </form>
 
@@ -163,7 +170,7 @@ function AudiobookPageInner({ id }: { id: string }) {
         </p>
 
         {chapters.length === 0 ? (
-          <p className="muted">No chapters yet. Titles first; audio files attach later.</p>
+          <p className="muted">No chapters yet. Drop audio files above, or add a title without a file.</p>
         ) : (
           <div className="grid">
             {chapters.map((chapter) => (

@@ -1,0 +1,114 @@
+.chapter-upload {
+  margin: 0 0 32px;
+}
+
+.chapter-upload-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.chapter-upload .sections-card-footer {
+  justify-content: space-between;
+}
+
+.file-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 140px;
+  padding: 28px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--text-muted);
+  text-align: center;
+  cursor: pointer;
+}
+
+.file-drop:hover,
+.file-drop.is-over {
+  border-color: var(--gold);
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.file-drop-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.file-drop-hint {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.chapter-upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 0 14px;
+}
+
+.chapter-upload-actions .section-label {
+  margin: 0;
+  flex: 1;
+}
+
+.chapter-upload > .banner {
+  margin-top: 14px;
+}
+
+.chapter-upload-actions-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.draft-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.draft-card-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.draft-card-status.is-error {
+  color: var(--danger);
+}
+
+.draft-card-status.is-done {
+  color: var(--moss-bright);
+}
+
+.draft-card-status.is-uploading {
+  color: var(--text);
+}
+
+.draft-progress {
+  width: 100%;
+  height: 4px;
+  appearance: none;
+  background: var(--border);
+  border-radius: 4px;
+}
+
+.draft-progress::-webkit-progress-bar {
+  background: var(--border);
+}
+
+.draft-progress::-webkit-progress-value {
+  background: var(--gold-bright);
+}

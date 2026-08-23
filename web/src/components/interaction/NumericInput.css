@@ -1,0 +1,62 @@
+.numeric-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.numeric-input-label {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.numeric-input input,
+.numeric-input textarea {
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-muted);
+  color: var(--text);
+  padding: 0.7rem 1rem;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.numeric-input input {
+  border-radius: var(--radius-full);
+}
+
+.numeric-input textarea {
+  border-radius: var(--radius-md);
+  min-height: 6.5rem;
+  resize: vertical;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.numeric-input input:focus,
+.numeric-input textarea:focus {
+  outline: none;
+  border-color: var(--text-muted);
+}
+
+.numeric-input input:disabled,
+.numeric-input textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.numeric-input-help {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-dim);
+}

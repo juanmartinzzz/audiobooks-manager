@@ -1,0 +1,215 @@
+.sections-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-elevated) 85%, transparent);
+  overflow: hidden;
+}
+
+.sections-card-chrome {
+  padding: 1rem 1.15rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.sections-card.is-collapsed .sections-card-chrome {
+  border-bottom: 0;
+}
+
+.sections-card-chrome-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sections-card-chrome-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  flex: 1;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.sections-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.85rem;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-dim);
+}
+
+.sections-card-meta .is-error {
+  color: var(--danger);
+}
+
+.sections-card-sections {
+  display: flex;
+  flex-direction: column;
+}
+
+.sections-card-sections > .sections-card-section + .sections-card-section {
+  border-top: 1px solid var(--border);
+}
+
+.sections-card-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.65rem 1.15rem;
+}
+
+.sections-card-section-header.is-open {
+  border-bottom: 1px solid var(--border);
+}
+
+.sections-card-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.sections-card-section-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.sections-card-section-title {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.sections-card-section-desc {
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.sections-card-section-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sections-card-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--gold);
+  color: #0a0a0a;
+  cursor: pointer;
+  padding: 0.35rem 0.85rem;
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.sections-card-collapse:hover {
+  background: var(--accent-hover);
+}
+
+.sections-card-collapse:active {
+  transform: scale(0.98);
+}
+
+.sections-card-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--sections-card-cols, 1), minmax(0, 1fr));
+}
+
+.sections-card-grid.has-template {
+  grid-template-columns: var(--sections-card-template);
+}
+
+.sections-card-column {
+  min-width: 0;
+  padding: 0.85rem 1.15rem;
+}
+
+.sections-card-grid > .sections-card-column + .sections-card-column {
+  border-left: 1px solid var(--border);
+}
+
+.sections-card-col-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.75rem;
+}
+
+.sections-card-col-title {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.sections-card-col-desc {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.sections-card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.15rem;
+}
+
+.sections-card-stack-block + .sections-card-stack-block {
+  padding-top: 1.15rem;
+  border-top: 1px solid var(--border);
+}
+
+.sections-card-fields {
+  display: grid;
+  grid-template-columns: repeat(var(--sections-card-field-cols, 1), minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.sections-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 1rem 1.15rem 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 860px) {
+  .sections-card-grid,
+  .sections-card-grid.has-template {
+    grid-template-columns: 1fr;
+  }
+
+  .sections-card-grid > .sections-card-column + .sections-card-column {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}

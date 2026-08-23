@@ -15,9 +15,19 @@
   --danger: #d6d6d2;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
   --radius: 0px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
   --radius-full: 9999px;
   --sans: "Space Grotesk", sans-serif;
   --mono: "JetBrains Mono", monospace;
+  --bg-muted: #1c1c1c;
+  --border-strong: var(--border);
+  --text-dim: var(--text-faint);
+  --font-display: var(--sans);
+  --font-body: var(--sans);
+  --accent: var(--gold);
+  --accent-contrast: #0a0a0a;
+  --accent-hover: #e8e8e8;
 }
 
 * {
@@ -325,6 +335,21 @@ main {
 .pill-btn-ghost:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--gold);
+}
+
+.library-create {
+  margin: 0 0 28px;
+}
+
+.library-create-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.library-create .sections-card-footer {
+  justify-content: space-between;
 }
 
 .empty-state {

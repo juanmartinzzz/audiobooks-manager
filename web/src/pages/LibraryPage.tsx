@@ -1,11 +1,19 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { BookOpen, Plus } from "lucide-react";
-import { Modal } from "../components/Modal";
+import { NumericInput } from "../components/interaction/NumericInput";
+import { PillSelect } from "../components/interaction/PillSelect";
+import { SectionsCard, type SectionsCardSection } from "../components/interaction/SectionsCard";
+import { TextArea, TextInput } from "../components/interaction/TextInput";
 import { PillButton } from "../components/PillButton";
 import { createAudiobook, listAudiobooks } from "../lib/api";
 import { emptyAudiobookDraft, type Audiobook, type AudiobookDraft } from "../types";
+
+const PLACEMENT_OPTIONS = [
+  { value: "standalone", label: "Standalone" },
+  { value: "series", label: "Part of a series" },
+];
 
 export function LibraryPage() {
   const navigate = useNavigate();
@@ -14,6 +22,7 @@ export function LibraryPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<AudiobookDraft>(emptyAudiobookDraft);
+  const [placement, setPlacement] = useState<"standalone" | "series">("standalone");
   const [saving, setSaving] = useState(false);
 
   async function refresh() {
@@ -39,14 +48,28 @@ export function LibraryPage() {
     };
   }, []);
 
+  function openCreate() {
+    setError(null);
+    setDraft(emptyAudiobookDraft());
+    setPlacement("standalone");
+    setCreating(true);
+  }
+
+  function closeCreate() {
+    setCreating(false);
+    setDraft(emptyAudiobookDraft());
+    setPlacement("standalone");
+  }
+
   async function onCreate() {
     setSaving(true);
     setError(null);
     try {
-      const { audiobook } = await createAudiobook(draft);
+      const payload =
+        placement === "series" ? draft : { ...draft, seriesTitle: "", seriesIndex: "" };
+      const { audiobook } = await createAudiobook(payload);
       await refresh();
-      setCreating(false);
-      setDraft(emptyAudiobookDraft());
+      closeCreate();
       navigate(`/audiobooks/${audiobook.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create audiobook");
@@ -55,6 +78,112 @@ export function LibraryPage() {
     }
   }
 
+  const formSections: SectionsCardSection[] = [
+    {
+      id: "identity",
+      title: "Identity",
+      description: "What readers see first. Title is the only required field.",
+      columns: [
+        <TextInput
+          key="title"
+          id="new-audiobook-title"
+          label="Title"
+          required
+          autoFocus
+          value={draft.title}
+          onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+        />,
+        <TextInput
+          key="subtitle"
+          label="Subtitle"
+          help="Shown under the title on the listening page."
+          value={draft.subtitle}
+          onChange={(event) => setDraft((current) => ({ ...current, subtitle: event.target.value }))}
+        />,
+      ],
+    },
+    {
+      id: "credits",
+      title: "Credits",
+      description: "Who wrote it and who reads it. Both can wait.",
+      columns: [
+        <TextInput
+          key="author"
+          label="Author"
+          value={draft.author}
+          onChange={(event) => setDraft((current) => ({ ...current, author: event.target.value }))}
+        />,
+        <TextInput
+          key="narrator"
+          label="Narrator"
+          value={draft.narrator}
+          onChange={(event) => setDraft((current) => ({ ...current, narrator: event.target.value }))}
+        />,
+      ],
+    },
+    {
+      id: "placement",
+      title: "Placement",
+      description: "A standalone title, or a numbered book in a series.",
+      columnWidths: placement === "series" ? "14rem 1fr 8rem" : undefined,
+      columns:
+        placement === "series"
+          ? [
+              <PillSelect
+                key="kind"
+                label="Kind"
+                options={PLACEMENT_OPTIONS}
+                value={placement}
+                onChange={(value) => setPlacement(value === "series" ? "series" : "standalone")}
+              />,
+              <TextInput
+                key="seriesTitle"
+                label="Series"
+                value={draft.seriesTitle}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, seriesTitle: event.target.value }))
+                }
+              />,
+              <NumericInput
+                key="seriesIndex"
+                label="Series index"
+                help="1, 2, 3…"
+                min={1}
+                step={1}
+                value={draft.seriesIndex}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, seriesIndex: event.target.value }))
+                }
+              />,
+            ]
+          : [
+              <PillSelect
+                key="kind"
+                label="Kind"
+                options={PLACEMENT_OPTIONS}
+                value={placement}
+                onChange={(value) => setPlacement(value === "series" ? "series" : "standalone")}
+              />,
+            ],
+    },
+    {
+      id: "about",
+      title: "About",
+      description: "Optional blurb. You can fill this in later.",
+      columns: [
+        <TextArea
+          key="description"
+          label="Description"
+          rows={3}
+          value={draft.description}
+          onChange={(event) =>
+            setDraft((current) => ({ ...current, description: event.target.value }))
+          }
+        />,
+      ],
+    },
+  ];
+
   return (
     <>
       <header className="top">
@@ -62,31 +191,70 @@ export function LibraryPage() {
           <div>
             <p className="brand-eyebrow">Audiobooks Manager</p>
             <h1 className="brand-title">Library</h1>
-            <p className="brand-sub">Create a book, then open it to add chapters and listen.</p>
+            <p className="brand-sub">Create a book, then open it to add chapters from audio files.</p>
           </div>
-          <PillButton onClick={() => setCreating(true)}>
-            <Plus size={16} />
-            New audiobook
-          </PillButton>
+          {creating ? (
+            <PillButton variant="ghost" onClick={closeCreate}>
+              Cancel
+            </PillButton>
+          ) : (
+            <PillButton onClick={openCreate}>
+              <Plus size={16} />
+              New audiobook
+            </PillButton>
+          )}
         </div>
       </header>
 
       <main className="wrap">
         {error ? <p className="banner">{error}</p> : null}
 
+        <AnimatePresence>
+          {creating ? (
+            <motion.form
+              className="library-create"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onCreate();
+              }}
+            >
+              <SectionsCard
+                id="library.new-audiobook"
+                title={<h2 className="library-create-title">New audiobook</h2>}
+                meta="Title is required. Everything else can wait."
+                sections={formSections}
+                footer={
+                  <>
+                    <PillButton variant="ghost" onClick={closeCreate}>
+                      Cancel
+                    </PillButton>
+                    <PillButton type="submit" disabled={saving || draft.title.trim().length === 0}>
+                      {saving ? "Creating…" : "Create"}
+                    </PillButton>
+                  </>
+                }
+              />
+            </motion.form>
+          ) : null}
+        </AnimatePresence>
+
         {loading ? (
           <p className="muted">Loading library…</p>
-        ) : audiobooks.length === 0 ? (
+        ) : audiobooks.length === 0 && !creating ? (
           <div className="empty-state">
             <BookOpen size={28} />
             <h2>No audiobooks yet</h2>
-            <p>Start with a title. Audio files go in later.</p>
-            <PillButton onClick={() => setCreating(true)}>
+            <p>Start with a title. Open it and drop audio files to create chapters.</p>
+            <PillButton onClick={openCreate}>
               <Plus size={16} />
               Create first audiobook
             </PillButton>
           </div>
-        ) : (
+        ) : audiobooks.length > 0 ? (
           <>
             <p className="section-label">{audiobooks.length} titles</p>
             <div className="grid">
@@ -116,100 +284,8 @@ export function LibraryPage() {
               ))}
             </div>
           </>
-        )}
-      </main>
-
-      <AnimatePresence>
-        {creating ? (
-          <Modal title="New audiobook" onClose={() => setCreating(false)}>
-            <form
-              className="form-stack"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void onCreate();
-              }}
-            >
-              <Field label="Title" required>
-                <input
-                  value={draft.title}
-                  onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-                  autoFocus
-                  required
-                />
-              </Field>
-              <Field label="Subtitle" help="Shown under the title on the listening page">
-                <input
-                  value={draft.subtitle}
-                  onChange={(event) => setDraft({ ...draft, subtitle: event.target.value })}
-                />
-              </Field>
-              <Field label="Author">
-                <input
-                  value={draft.author}
-                  onChange={(event) => setDraft({ ...draft, author: event.target.value })}
-                />
-              </Field>
-              <Field label="Narrator">
-                <input
-                  value={draft.narrator}
-                  onChange={(event) => setDraft({ ...draft, narrator: event.target.value })}
-                />
-              </Field>
-              <Field label="Series">
-                <input
-                  value={draft.seriesTitle}
-                  onChange={(event) => setDraft({ ...draft, seriesTitle: event.target.value })}
-                />
-              </Field>
-              <Field label="Series index" help="1, 2, 3…">
-                <input
-                  inputMode="numeric"
-                  value={draft.seriesIndex}
-                  onChange={(event) => setDraft({ ...draft, seriesIndex: event.target.value })}
-                />
-              </Field>
-              <Field label="Description">
-                <textarea
-                  rows={3}
-                  value={draft.description}
-                  onChange={(event) => setDraft({ ...draft, description: event.target.value })}
-                />
-              </Field>
-              <div className="modal-actions">
-                <PillButton variant="ghost" onClick={() => setCreating(false)}>
-                  Cancel
-                </PillButton>
-                <PillButton type="submit" disabled={saving || draft.title.trim().length === 0}>
-                  {saving ? "Creating…" : "Create"}
-                </PillButton>
-              </div>
-            </form>
-          </Modal>
         ) : null}
-      </AnimatePresence>
+      </main>
     </>
-  );
-}
-
-function Field({
-  label,
-  help,
-  required,
-  children,
-}: {
-  label: string;
-  help?: string;
-  required?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <label className="field">
-      <span className="field-label">
-        {label}
-        {required ? " *" : ""}
-      </span>
-      {children}
-      {help ? <span className="field-help">{help}</span> : null}
-    </label>
   );
 }

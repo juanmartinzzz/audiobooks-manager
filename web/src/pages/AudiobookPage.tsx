@@ -27,7 +27,7 @@ import {
   type PlaybackPrefs,
   type PlaybackSettings,
 } from "../lib/playbackPrefs";
-import { useAppPassword } from "../components/AppPasswordBar";
+import { useAppPassword } from "../components/AppPasswordProvider";
 import { isFinished, playedFraction, resumeSeconds } from "../lib/playbackProgress";
 import { toRoman } from "../lib/roman";
 import type { Audiobook, Chapter, ChapterProgress } from "../types";
@@ -228,7 +228,17 @@ function AudiobookPageInner({ id }: { id: string }) {
   if (!audiobook) {
     return (
       <main className="wrap">
-        <p className="banner">{error ?? "Audiobook not found"}</p>
+        <p className="banner">
+          {error ?? "Audiobook not found"}
+          {error === "Password missing or incorrect" ? (
+            <>
+              {" "}
+              <Link className="text-link banner-link" to="/settings">
+                Open settings
+              </Link>
+            </>
+          ) : null}
+        </p>
         <Link className="text-link" to="/">
           Back to library
         </Link>
@@ -301,7 +311,19 @@ function AudiobookPageInner({ id }: { id: string }) {
       </header>
 
       <main className="wrap">
-        {error ? <p className="banner">{error}</p> : null}
+        {error ? (
+          <p className="banner">
+            {error}
+            {error === "Password missing or incorrect" ? (
+              <>
+                {" "}
+                <Link className="text-link banner-link" to="/settings">
+                  Open settings
+                </Link>
+              </>
+            ) : null}
+          </p>
+        ) : null}
 
         {isDraft ? (
           <>

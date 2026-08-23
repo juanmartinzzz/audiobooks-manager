@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { BookOpen, CheckCircle2, Plus } from "lucide-react";
+import { BookOpen, CheckCircle2, Plus, Settings } from "lucide-react";
 import { NumericInput } from "../components/interaction/NumericInput";
 import { PillSelect } from "../components/interaction/PillSelect";
 import { SectionsCard, type SectionsCardSection } from "../components/interaction/SectionsCard";
 import { TextArea, TextInput } from "../components/interaction/TextInput";
 import { PillButton } from "../components/PillButton";
 import { createAudiobook, listAudiobooks, audiobookCoverUrl } from "../lib/api";
-import { useAppPassword } from "../components/AppPasswordBar";
+import { useAppPassword } from "../components/AppPasswordProvider";
 import { emptyAudiobookDraft, type Audiobook, type AudiobookDraft } from "../types";
 
 const PLACEMENT_OPTIONS = [
@@ -200,21 +200,39 @@ export function LibraryPage() {
             <h1 className="brand-title">Library</h1>
             <p className="brand-sub">Create a book, then open it to add chapters from audio files.</p>
           </div>
-          {creating ? (
-            <PillButton variant="ghost" onClick={closeCreate}>
-              Cancel
+          <div className="header-actions">
+            <PillButton variant="ghost" onClick={() => navigate("/settings")}>
+              <Settings size={16} />
+              Settings
             </PillButton>
-          ) : (
-            <PillButton onClick={openCreate}>
-              <Plus size={16} />
-              New audiobook
-            </PillButton>
-          )}
+            {creating ? (
+              <PillButton variant="ghost" onClick={closeCreate}>
+                Cancel
+              </PillButton>
+            ) : (
+              <PillButton onClick={openCreate}>
+                <Plus size={16} />
+                New audiobook
+              </PillButton>
+            )}
+          </div>
         </div>
       </header>
 
       <main className="wrap">
-        {error ? <p className="banner">{error}</p> : null}
+        {error ? (
+          <p className="banner">
+            {error}
+            {error === "Password missing or incorrect" ? (
+              <>
+                {" "}
+                <Link className="text-link banner-link" to="/settings">
+                  Open settings
+                </Link>
+              </>
+            ) : null}
+          </p>
+        ) : null}
 
         <AnimatePresence>
           {creating ? (

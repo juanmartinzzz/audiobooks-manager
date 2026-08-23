@@ -61,8 +61,12 @@ export function normalizeDurationSeconds(value: number): number | null {
 }
 
 export function durationFromAudioFile(file: File): Promise<number | null> {
+  const url = URL.createObjectURL(file);
+  return durationFromAudioSrc(url).finally(() => URL.revokeObjectURL(url));
+}
+
+function durationFromAudioSrc(src: string): Promise<number | null> {
   return new Promise((resolve) => {
-    const url = URL.createObjectURL(file);
     const audio = document.createElement("audio");
     let settled = false;
 
@@ -72,7 +76,6 @@ export function durationFromAudioFile(file: File): Promise<number | null> {
       window.clearTimeout(timer);
       audio.removeAttribute("src");
       audio.load();
-      URL.revokeObjectURL(url);
       resolve(normalizeDurationSeconds(value ?? Number.NaN));
     };
 
@@ -86,11 +89,16 @@ export function durationFromAudioFile(file: File): Promise<number | null> {
       }
       audio.currentTime = Number.MAX_SAFE_INTEGER;
     });
+    audio.addEventListener("durationchange", () => {
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        finish(audio.duration);
+      }
+    });
     audio.addEventListener("timeupdate", () => {
       if (Number.isFinite(audio.duration) && audio.duration > 0) {
         finish(audio.duration);
       }
     });
-    audio.src = url;
+    audio.src = src;
   });
 }

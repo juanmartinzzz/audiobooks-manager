@@ -16,7 +16,8 @@
     "migrate:remote": "npm run with-env -- npm run migrate:remote -w api",
     "deploy:web": "npm run with-env -- npm run build -w web && npm run with-env -- npm run deploy -w web",
     "deploy": "npm run deploy:api && npm run deploy:web",
-    "repos:update": "node scripts/update-repos.mjs"
+    "repos:update": "node scripts/update-repos.mjs",
+    "r2:usage": "npm run with-env -- node scripts/r2-usage.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

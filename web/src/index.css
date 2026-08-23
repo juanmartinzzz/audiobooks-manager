@@ -73,7 +73,7 @@ textarea {
 .wrap {
   max-width: 1180px;
   margin: 0 auto;
-  padding: 0 28px;
+  padding-inline: 28px;
 }
 
 header.top {
@@ -571,7 +571,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 @media (max-width: 640px) {
   .wrap {
-    padding: 0 16px;
+    padding-inline: 16px;
   }
 
   header.top {

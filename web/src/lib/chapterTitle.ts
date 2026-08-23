@@ -1,21 +1,20 @@
 const AUDIO_EXT = /\.(mp3|m4a|m4b|aac|wav|flac|ogg|opus|webm|mp4)$/i;
 
 export function chapterTitleFromFilename(filename: string): string {
-  const trimmed = filename.trim();
-  let name = trimmed.replace(AUDIO_EXT, "");
-  name = name.replace(/\.[^.]+$/, "");
-  name = name.replace(/_/g, " ");
-  name = name.replace(/\s+/g, " ").trim();
+  const name = filename.trim().replace(AUDIO_EXT, "").trim();
+  return name.length > 0 ? name : "Untitled chapter";
+}
+
+/** Optional. Strips a leading track/chapter number and the separator after it. */
+export function stripLeadingNumbering(title: string): string {
+  let name = title.trim();
   name = name.replace(
     /^(?:(?:chapter|ch|track|disc|part|ep|episode)\s*)?#?\s*\d+\s*(?:[.)\]:_-]|–|—)?\s*/i,
     "",
   );
   name = name.replace(/^[-–—.:]+\s*/, "");
   name = name.replace(/\s+/g, " ").trim();
-
-  if (name.length > 0) return name;
-  const fallback = trimmed.replace(AUDIO_EXT, "").trim();
-  return fallback.length > 0 ? fallback : "Untitled chapter";
+  return name;
 }
 
 export function formatBytes(bytes: number): string {

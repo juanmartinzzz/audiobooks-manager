@@ -9,6 +9,7 @@ import {
   formatBytes,
   isAudioFile,
   sortAudioFiles,
+  stripLeadingNumbering,
 } from "../lib/chapterTitle";
 import { repeatedTitleSnippets, stripTitleSnippet } from "../lib/titleSnippets";
 import { runPool } from "../lib/pool";
@@ -36,13 +37,13 @@ type Props = {
   onUploaded: () => Promise<void> | void;
 };
 
-function statusLabel(draft: ChapterDraft): string {
+function statusLabel(draft: ChapterDraft): string | null {
   if (draft.status === "uploading") {
     return `Uploading ${Math.round(draft.progress * 100)}%`;
   }
   if (draft.status === "done") return "Uploaded";
   if (draft.status === "error") return draft.error ?? "Failed";
-  return "Ready to confirm";
+  return null;
 }
 
 function draftsFromFiles(files: File[]): ChapterDraft[] {
@@ -240,7 +241,7 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
     sections.push({
       id: "repeated",
       title: "Repeated in names",
-      description: "These bits show up in at least three titles. Tap one to strip it.",
+      description: "Same space-separated text in at least three titles, as written. Tap one to strip it.",
       columns: [
         <div key="repeated" className="chapter-upload-pills" role="group" aria-label="Repeated text to remove">
           {visibleSuggestions.map((item) => (
@@ -287,7 +288,7 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
         meta={
           drafts.length > 0
             ? `${drafts.length} ${drafts.length === 1 ? "file" : "files"} to confirm. Nothing is saved until you upload.`
-            : "Names are hinted from filenames. Nothing is saved until you upload."
+            : "Names are the filename without the extension. Nothing is saved until you upload."
         }
         sections={sections}
         footer={
@@ -308,6 +309,24 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
                   }
                 >
                   Re-hint names
+                </PillButton>
+                <PillButton
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    setDrafts((current) =>
+                      current.map((draft) => {
+                        if (draft.status === "uploading" || draft.status === "done") return draft;
+                        const title = stripLeadingNumbering(draft.title);
+                        return {
+                          ...draft,
+                          title: title.length > 0 ? title : "Untitled chapter",
+                        };
+                      }),
+                    )
+                  }
+                >
+                  Strip leading numbers
                 </PillButton>
                 <PillButton
                   variant="ghost"
@@ -335,7 +354,9 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
 
       {drafts.length > 0 ? (
         <div className="draft-grid">
-          {drafts.map((draft) => (
+          {drafts.map((draft) => {
+            const status = statusLabel(draft);
+            return (
             <SectionsCard
               key={draft.id}
               id={`audiobook.chapter-draft.${draft.id}`}
@@ -346,18 +367,18 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
                 <>
                   <span>{draft.file.name}</span>
                   <span>{formatBytes(draft.file.size)}</span>
-                  <span className={`draft-card-status is-${draft.status}`}>{statusLabel(draft)}</span>
+                  {status ? <span className={`draft-card-status is-${draft.status}`}>{status}</span> : null}
                 </>
               }
               sections={[
                 {
                   id: "title",
-                  title: "Chapter title",
-                  description: "Hinted from the filename. Edit it before this file is uploaded.",
+                  title: "Chapter title to save",
                   columns: [
                     <TextInput
                       key="title"
-                      label="Title"
+                      id={`draft-title-${draft.id}`}
+                      aria-label="Chapter title to save"
                       value={draft.title}
                       disabled={draft.status === "uploading" || draft.status === "done"}
                       onChange={(event) => setDraft(draft.id, { title: event.target.value, status: "ready", error: null })}
@@ -399,7 +420,8 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
                 </>
               }
             />
-          ))}
+            );
+          })}
         </div>
       ) : null}
     </div>

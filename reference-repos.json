@@ -1,0 +1,9 @@
+{
+  "repos": [
+    {
+      "name": "penny-edge-v2",
+      "url": "https://github.com/juanmartinzzz/penny-edge-v2.git",
+      "extraContext": "UI reference — borrow patterns from src/components/interaction and other UI. Browse under repos/penny-edge-v2; do not npm install."
+    }
+  ]
+}

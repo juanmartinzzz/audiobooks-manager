@@ -11,3 +11,5 @@ npm run dev
 - Production API: https://audiobooks-manager-api.juan-martinzzz.workers.dev/api/health
 
 The sample HTML at the repo root is reference-only.
+
+Read-only reference clones live under `repos/` (gitignored). Manifest: `reference-repos.json`. Update with `npm run repos:update`. Do not edit or install inside those clones.

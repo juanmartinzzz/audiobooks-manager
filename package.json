@@ -11,9 +11,12 @@
     "dev:api": "npm run dev -w api",
     "build": "npm run build -w web",
     "types:api": "npm run types -w api",
-    "deploy:api": "npm run deploy -w api",
-    "migrate:remote": "npm run migrate:remote -w api",
-    "deploy:web": "npm run build -w web && npm run deploy -w web"
+    "with-env": "bash scripts/with-env.sh",
+    "deploy:api": "npm run with-env -- npm run deploy -w api",
+    "migrate:remote": "npm run with-env -- npm run migrate:remote -w api",
+    "deploy:web": "npm run with-env -- npm run build -w web && npm run with-env -- npm run deploy -w web",
+    "deploy": "npm run deploy:api && npm run deploy:web",
+    "repos:update": "node scripts/update-repos.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

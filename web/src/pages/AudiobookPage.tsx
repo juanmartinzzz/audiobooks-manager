@@ -1,11 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Play, Plus, Settings, SkipBack, SkipForward, Trash2 } from "lucide-react";
+import { ArrowLeft, Play, Plus, Settings, Trash2 } from "lucide-react";
 import { ChapterBulkUpload } from "../components/ChapterBulkUpload";
 import { Modal } from "../components/Modal";
+import { NowPlaying } from "../components/NowPlaying";
+import { NumericInput } from "../components/interaction/NumericInput";
 import { PillButton } from "../components/PillButton";
-import { createChapter, deleteAudiobook, deleteChapter, getAudiobook } from "../lib/api";
+import {
+  createChapter,
+  deleteAudiobook,
+  deleteChapter,
+  getAudiobook,
+  audiobookCoverUrl,
+  chapterAudioUrl,
+} from "../lib/api";
+import { formatChapterAudioFacts } from "../lib/audioDuration";
+import {
+  clampPlaybackSettings,
+  loadPlaybackPrefs,
+  loadPlaybackSettings,
+  savePlaybackPrefs,
+  savePlaybackSettings,
+  type PlaybackPrefs,
+  type PlaybackSettings,
+} from "../lib/playbackPrefs";
 import { toRoman } from "../lib/roman";
 import type { Audiobook, Chapter } from "../types";
 
@@ -25,6 +44,9 @@ function AudiobookPageInner({ id }: { id: string }) {
   const [adding, setAdding] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState(loadPlaybackSettings);
+  const [prefs, setPrefs] = useState(loadPlaybackPrefs);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   async function refresh(audiobookId: string) {
     const data = await getAudiobook(audiobookId);
@@ -83,6 +105,44 @@ function AudiobookPageInner({ id }: { id: string }) {
     navigate("/");
   }
 
+  function onPrefsChange(next: PlaybackPrefs) {
+    setPrefs(next);
+    savePlaybackPrefs(next);
+  }
+
+  function activateChapter(chapter: Chapter, autoplay: boolean) {
+    setActiveId(chapter.id);
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (!chapter.audioAssetId) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      return;
+    }
+    const url = chapterAudioUrl(chapter.id);
+    if (audio.getAttribute("src") !== url) {
+      audio.src = url;
+    }
+    if (!autoplay) return;
+    void audio.play().catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : "Could not play this chapter";
+      setError(message);
+    });
+  }
+
+  function closePlayer() {
+    audioRef.current?.pause();
+    setActiveId(null);
+  }
+
+  function onSaveSettings(next: PlaybackSettings) {
+    const clamped = clampPlaybackSettings(next);
+    setSettings(clamped);
+    savePlaybackSettings(clamped);
+    setSettingsOpen(false);
+  }
+
   if (loading) {
     return (
       <main className="wrap">
@@ -110,19 +170,28 @@ function AudiobookPageInner({ id }: { id: string }) {
     <>
       <header className="top">
         <div className="wrap header-row">
-          <div>
-            <Link className="back-link" to="/">
-              <ArrowLeft size={16} />
-              Library
-            </Link>
-            <p className="brand-eyebrow">{eyebrow}</p>
-            <h1 className="brand-title">{audiobook.title}</h1>
-            <p className="brand-sub">
-              {audiobook.subtitle ??
-                (audiobook.author
-                  ? `${audiobook.author}${audiobook.narrator ? ` · narrated by ${audiobook.narrator}` : ""}`
-                  : "Drop audio files to create chapters, or add a title without a file.")}
-            </p>
+          <div className="header-identity">
+            {audiobook.hasCover ? (
+              <img
+                className="book-cover-hero"
+                src={audiobookCoverUrl(audiobook.id, audiobook.updatedAt)}
+                alt=""
+              />
+            ) : null}
+            <div>
+              <Link className="back-link" to="/">
+                <ArrowLeft size={16} />
+                Library
+              </Link>
+              <p className="brand-eyebrow">{eyebrow}</p>
+              <h1 className="brand-title">{audiobook.title}</h1>
+              <p className="brand-sub">
+                {audiobook.subtitle ??
+                  (audiobook.author
+                    ? `${audiobook.author}${audiobook.narrator ? ` · narrated by ${audiobook.narrator}` : ""}`
+                    : "Drop audio files to create chapters, or add a title without a file.")}
+              </p>
+            </div>
           </div>
           <div className="header-actions">
             <button
@@ -182,29 +251,45 @@ function AudiobookPageInner({ id }: { id: string }) {
                 tabIndex={0}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                onClick={() => setActiveId(chapter.id)}
+                onClick={() => activateChapter(chapter, true)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    setActiveId(chapter.id);
+                    activateChapter(chapter, true);
                   }
                 }}
               >
                 <span className="chapter-num mono">Chapter {String(chapter.position).padStart(2, "0")}</span>
                 <h3 className="chapter-title">{chapter.title}</h3>
                 <div className="chapter-meta">
-                  <span className="dur">{chapter.audioAssetId ? "Audio ready" : "No audio yet"}</span>
-                  <button
-                    type="button"
-                    className="chapter-play"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      void onDeleteChapter(chapter.id);
-                    }}
-                    aria-label={`Delete ${chapter.title}`}
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                  <span className="dur">{formatChapterAudioFacts(chapter)}</span>
+                  <div className="chapter-card-actions">
+                    <button
+                      type="button"
+                      className="chapter-play"
+                      disabled={!chapter.audioAssetId}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        activateChapter(chapter, true);
+                      }}
+                      aria-label={
+                        chapter.audioAssetId ? `Play ${chapter.title}` : `${chapter.title} has no audio`
+                      }
+                    >
+                      <Play size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      className="chapter-delete"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void onDeleteChapter(chapter.id);
+                      }}
+                      aria-label={`Delete ${chapter.title}`}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             ))}
@@ -212,48 +297,85 @@ function AudiobookPageInner({ id }: { id: string }) {
         )}
 
         {active ? (
-          <section className="now-playing" aria-live="polite">
-            <div className="np-head">
-              <div>
-                <p className="eyebrow">Now playing</p>
-                <h2>{active.title}</h2>
-              </div>
-            </div>
-            <div className="transport">
-              <button type="button" className="transport-btn" disabled title="Skip back">
-                <SkipBack size={18} />
-              </button>
-              <button type="button" className="transport-btn play-main" disabled aria-label="Play">
-                <Play size={22} />
-              </button>
-              <button type="button" className="transport-btn" disabled title="Skip forward">
-                <SkipForward size={18} />
-              </button>
-              <div className="seek-row">
-                <span className="time-mono">0:00</span>
-                <input type="range" min={0} max={100} value={0} readOnly />
-                <span className="time-mono end">—</span>
-              </div>
-            </div>
-            <p className="muted">Playback waits until this chapter has an audio file in the bucket.</p>
-          </section>
+          <NowPlaying
+            audioRef={audioRef}
+            chapter={active}
+            chapters={chapters}
+            settings={settings}
+            prefs={prefs}
+            onPrefsChange={onPrefsChange}
+            onSelectChapter={(chapterId) => {
+              const next = chapters.find((item) => item.id === chapterId);
+              if (next) activateChapter(next, true);
+            }}
+            onClose={closePlayer}
+          />
         ) : null}
       </main>
+      <audio ref={audioRef} preload="metadata" />
 
       {settingsOpen ? (
-        <Modal title="Journey settings" onClose={() => setSettingsOpen(false)}>
-          <p className="muted">
-            Segment length, skip amounts, and playback prefs will persist after the schema is approved.
-            Defaults match the sample: 5 minute segments, 15s back, 30s forward.
-          </p>
-          <div className="modal-actions">
-            <PillButton variant="ghost" onClick={() => void onDeleteBook()}>
-              Delete audiobook
-            </PillButton>
-            <PillButton onClick={() => setSettingsOpen(false)}>Done</PillButton>
-          </div>
-        </Modal>
+        <JourneySettingsModal
+          settings={settings}
+          onSave={onSaveSettings}
+          onClose={() => setSettingsOpen(false)}
+          onDeleteBook={() => void onDeleteBook()}
+        />
       ) : null}
     </>
+  );
+}
+
+function JourneySettingsModal({
+  settings,
+  onSave,
+  onClose,
+  onDeleteBook,
+}: {
+  settings: PlaybackSettings;
+  onSave: (settings: PlaybackSettings) => void;
+  onClose: () => void;
+  onDeleteBook: () => void;
+}) {
+  const [draft, setDraft] = useState(settings);
+
+  return (
+    <Modal title="Journey settings" onClose={onClose}>
+      <div className="settings-stack">
+        <NumericInput
+          label="Waypoint length"
+          help="Minutes per segment along a chapter"
+          min={1}
+          max={60}
+          step={1}
+          value={draft.segmentMinutes}
+          onChange={(event) => setDraft({ ...draft, segmentMinutes: Number(event.target.value) })}
+        />
+        <NumericInput
+          label="Skip back"
+          help="Seconds"
+          min={5}
+          max={120}
+          step={5}
+          value={draft.skipBack}
+          onChange={(event) => setDraft({ ...draft, skipBack: Number(event.target.value) })}
+        />
+        <NumericInput
+          label="Skip forward"
+          help="Seconds"
+          min={5}
+          max={120}
+          step={5}
+          value={draft.skipForward}
+          onChange={(event) => setDraft({ ...draft, skipForward: Number(event.target.value) })}
+        />
+      </div>
+      <div className="modal-actions">
+        <PillButton variant="ghost" onClick={onDeleteBook}>
+          Delete audiobook
+        </PillButton>
+        <PillButton onClick={() => onSave(draft)}>Done</PillButton>
+      </div>
+    </Modal>
   );
 }

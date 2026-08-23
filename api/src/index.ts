@@ -1,5 +1,11 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import {
+  contentTypeForContainer,
+  inspectR2Audio,
+  normalizeDurationSeconds,
+  type EmbeddedCover,
+} from "./audioMetadata";
 import type {
   Audiobook,
   AudiobookRecord,
@@ -34,13 +40,16 @@ app.use(
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowHeaders: [
       "Content-Type",
+      "Range",
       "X-Chapter-Title",
       "X-Original-Filename",
       "X-Chapter-Position",
+      "X-Duration-Seconds",
       "X-R2-Key",
       "X-Upload-Id",
       "X-Part-Number",
     ],
+    exposeHeaders: ["Accept-Ranges", "Content-Range", "Content-Length", "Content-Type", "ETag"],
   }),
 );
 
@@ -52,13 +61,17 @@ app.get("/api/audiobooks", async (c) => {
         a.id, a.title, a.subtitle, a.author, a.narrator,
         a.series_title, a.series_index, a.description,
         a.created_at, a.updated_at,
-        COUNT(ch.id) AS chapter_count
+        COUNT(ch.id) AS chapter_count,
+        EXISTS (
+          SELECT 1 FROM assets cov
+          WHERE cov.audiobook_id = a.id AND cov.kind = 'cover' AND cov.removed_at IS NULL
+        ) AS has_cover
       FROM audiobooks a
       LEFT JOIN chapters ch ON ch.audiobook_id = a.id AND ch.removed_at IS NULL
       WHERE a.removed_at IS NULL
       GROUP BY a.id
       ORDER BY a.updated_at DESC`,
-  ).all<AudiobookRecord & { chapter_count: number }>();
+  ).all<AudiobookRecord & { chapter_count: number; has_cover: number }>();
 
   return c.json({ audiobooks: results.map(mapAudiobook) });
 });
@@ -101,7 +114,7 @@ app.get("/api/audiobooks/:id", async (c) => {
     `SELECT
         ch.id, ch.audiobook_id, ch.position, ch.title, ch.audio_asset_id,
         ch.created_at, ch.updated_at,
-        a.duration_seconds, a.size_bytes
+        a.duration_seconds, a.size_bytes, a.container, a.bitrate, a.sample_rate, a.channels
       FROM chapters ch
       LEFT JOIN assets a ON a.id = ch.audio_asset_id AND a.removed_at IS NULL
       WHERE ch.audiobook_id = ? AND ch.removed_at IS NULL
@@ -111,6 +124,28 @@ app.get("/api/audiobooks/:id", async (c) => {
     .all<ChapterRecord>();
 
   return c.json({ audiobook, chapters: results.map(mapChapter) });
+});
+
+app.get("/api/audiobooks/:id/cover", async (c) => {
+  const audiobook = await loadAudiobook(c.env.DB, c.req.param("id"));
+  if (!audiobook) return c.json({ error: "Audiobook not found" }, 404);
+
+  const row = await c.env.DB.prepare(
+    `SELECT r2_key, content_type FROM assets
+      WHERE audiobook_id = ? AND kind = 'cover' AND removed_at IS NULL`,
+  )
+    .bind(audiobook.id)
+    .first<{ r2_key: string; content_type: string | null }>();
+  if (!row) return c.json({ error: "Cover not found" }, 404);
+
+  const object = await c.env.AUDIO.get(row.r2_key);
+  if (!object?.body) return c.json({ error: "Cover not found" }, 404);
+
+  const headers = new Headers();
+  headers.set("Content-Type", row.content_type || object.httpMetadata?.contentType || "image/jpeg");
+  headers.set("Cache-Control", "public, max-age=86400");
+  if (object.httpEtag) headers.set("ETag", object.httpEtag);
+  return new Response(object.body, { status: 200, headers });
 });
 
 app.patch("/api/audiobooks/:id", async (c) => {
@@ -196,6 +231,7 @@ app.put("/api/audiobooks/:id/chapters/audio", async (c) => {
   const title = requiredText(decodeHeader(c.req.header("X-Chapter-Title")), "title");
   const originalFilename = optionalText(decodeHeader(c.req.header("X-Original-Filename")));
   const requestedPosition = optionalPositiveInt(c.req.header("X-Chapter-Position"));
+  const durationSeconds = optionalDurationSeconds(c.req.header("X-Duration-Seconds"));
   const contentType = normalizeContentType(c.req.header("Content-Type"));
   if (!isAudioContentType(contentType)) {
     throw new HttpError("File must be audio", 400);
@@ -232,6 +268,7 @@ app.put("/api/audiobooks/:id/chapters/audio", async (c) => {
     sizeBytes: stored.size || contentLength,
     originalFilename,
     requestedPosition,
+    durationSeconds,
   });
   return c.json({ chapter }, 201);
 });
@@ -299,6 +336,7 @@ app.post("/api/audiobooks/:id/uploads/complete", async (c) => {
     contentType?: string;
     sizeBytes?: number;
     position?: number;
+    durationSeconds?: number;
     parts?: { partNumber?: number; etag?: string }[];
   }>(c.req.raw);
 
@@ -339,6 +377,7 @@ app.post("/api/audiobooks/:id/uploads/complete", async (c) => {
     sizeBytes: stored.size || body.sizeBytes,
     originalFilename,
     requestedPosition: body.position === undefined ? undefined : requiredPositiveInt(body.position, "position"),
+    durationSeconds: optionalDurationSeconds(body.durationSeconds),
   });
   return c.json({ chapter }, 201);
 });
@@ -394,6 +433,51 @@ app.delete("/api/chapters/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+app.get("/api/chapters/:id/audio", async (c) => {
+  const chapter = await loadChapter(c.env.DB, c.req.param("id"));
+  if (!chapter) return c.json({ error: "Chapter not found" }, 404);
+  if (!chapter.audioAssetId) return c.json({ error: "This chapter has no audio file" }, 404);
+
+  const asset = await c.env.DB.prepare(
+    `SELECT r2_key, content_type FROM assets
+      WHERE id = ? AND kind = 'audio' AND removed_at IS NULL`,
+  )
+    .bind(chapter.audioAssetId)
+    .first<{ r2_key: string; content_type: string | null }>();
+  if (!asset) return c.json({ error: "Audio not found" }, 404);
+
+  const range = parseByteRange(c.req.header("Range"));
+  const object = await c.env.AUDIO.get(asset.r2_key, range ? { range } : undefined);
+  if (!object) return c.json({ error: "Audio not found" }, 404);
+
+  if (range && rangeIsUnsatisfiable(range, object.size)) {
+    const headers = new Headers();
+    headers.set("Content-Range", `bytes */${object.size}`);
+    headers.set("Accept-Ranges", "bytes");
+    return new Response(null, { status: 416, headers });
+  }
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set(
+    "Content-Type",
+    asset.content_type || object.httpMetadata?.contentType || "application/octet-stream",
+  );
+  headers.set("Accept-Ranges", "bytes");
+  headers.set("Cache-Control", "public, max-age=86400");
+  if (object.httpEtag) headers.set("ETag", object.httpEtag);
+
+  const contentRange = contentRangeForObject(object);
+  if (contentRange) {
+    headers.set("Content-Range", contentRange);
+    headers.set("Content-Length", String(rangedByteLength(contentRange, object.size)));
+    return new Response(object.body, { status: 206, headers });
+  }
+
+  headers.set("Content-Length", String(object.size));
+  return new Response(object.body, { status: 200, headers });
+});
+
 app.onError((err, c) => {
   if (err instanceof HttpError) {
     return c.json({ error: err.message }, err.status);
@@ -407,8 +491,8 @@ app.notFound((c) => c.json({ error: "Not found" }, 404));
 export default app;
 
 class HttpError extends Error {
-  status: 400 | 404 | 422;
-  constructor(message: string, status: 400 | 404 | 422) {
+  status: 400 | 404 | 409 | 422;
+  constructor(message: string, status: 400 | 404 | 409 | 422) {
     super(message);
     this.status = status;
   }
@@ -495,6 +579,12 @@ function optionalPositiveInt(value: string | undefined): number | undefined {
   return requiredPositiveInt(parsed, "position");
 }
 
+function optionalDurationSeconds(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(String(value).trim());
+  return normalizeDurationSeconds(parsed);
+}
+
 function decodeHeader(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   try {
@@ -535,26 +625,46 @@ async function commitChapterAudio(
     sizeBytes: number;
     originalFilename: string | null;
     requestedPosition: number | undefined;
+    durationSeconds: number | null;
   },
 ): Promise<Chapter> {
   const chapterId = crypto.randomUUID();
   const now = Date.now();
+  const { facts, checksum } = await inspectR2Audio(bucket, input.r2Key, {
+    sizeBytes: input.sizeBytes,
+    filename: input.originalFilename,
+  });
+  const durationSeconds = input.durationSeconds ?? facts.durationSeconds;
+  const contentType = contentTypeForContainer(facts.container, input.contentType);
+  const stored = {
+    chapterId,
+    assetId: input.assetId,
+    audiobookId: input.audiobookId,
+    title: input.title,
+    r2Key: input.r2Key,
+    contentType,
+    sizeBytes: input.sizeBytes,
+    originalFilename: input.originalFilename,
+    durationSeconds,
+    container: facts.container,
+    bitrate: facts.bitrate,
+    sampleRate: facts.sampleRate,
+    channels: facts.channels,
+    checksum,
+    album: facts.album,
+    artist: facts.artist,
+    narrator: facts.narrator,
+    now,
+  };
 
   try {
     const position = input.requestedPosition ?? (await nextChapterPosition(db, input.audiobookId));
-    await insertChapterWithAudio(db, {
-      chapterId,
-      assetId: input.assetId,
-      audiobookId: input.audiobookId,
-      position,
-      title: input.title,
-      r2Key: input.r2Key,
-      contentType: input.contentType,
-      sizeBytes: input.sizeBytes,
-      originalFilename: input.originalFilename,
-      now,
-    });
+    await insertChapterWithAudio(db, { ...stored, position });
   } catch (err) {
+    if (isChecksumConstraint(err)) {
+      await bucket.delete(input.r2Key);
+      throw new HttpError("This audio file is already a chapter in this book", 409);
+    }
     const retryable = input.requestedPosition === undefined && isUniqueConstraint(err);
     if (!retryable) {
       await bucket.delete(input.r2Key);
@@ -562,22 +672,28 @@ async function commitChapterAudio(
     }
     try {
       const position = await nextChapterPosition(db, input.audiobookId);
-      await insertChapterWithAudio(db, {
-        chapterId,
-        assetId: input.assetId,
-        audiobookId: input.audiobookId,
-        position,
-        title: input.title,
-        r2Key: input.r2Key,
-        contentType: input.contentType,
-        sizeBytes: input.sizeBytes,
-        originalFilename: input.originalFilename,
-        now,
-      });
+      await insertChapterWithAudio(db, { ...stored, position });
     } catch (retryErr) {
       await bucket.delete(input.r2Key);
+      if (isChecksumConstraint(retryErr)) {
+        throw new HttpError("This audio file is already a chapter in this book", 409);
+      }
       throw retryErr;
     }
+  }
+
+  await fillEmptyBookFields(db, input.audiobookId, {
+    album: facts.album,
+    artist: facts.artist,
+    narrator: facts.narrator,
+    now,
+  });
+  if (facts.cover) {
+    await maybeStoreCover(db, bucket, {
+      audiobookId: input.audiobookId,
+      cover: facts.cover,
+      now,
+    });
   }
 
   const chapter = await loadChapter(db, chapterId);
@@ -597,6 +713,15 @@ async function insertChapterWithAudio(
     contentType: string;
     sizeBytes: number;
     originalFilename: string | null;
+    durationSeconds: number | null;
+    container: string | null;
+    bitrate: number | null;
+    sampleRate: number | null;
+    channels: number | null;
+    checksum: string | null;
+    album: string | null;
+    artist: string | null;
+    narrator: string | null;
     now: number;
   },
 ): Promise<void> {
@@ -605,8 +730,9 @@ async function insertChapterWithAudio(
       .prepare(
         `INSERT INTO assets (
             id, audiobook_id, r2_key, kind, content_type, size_bytes, duration_seconds,
-            original_filename, created_at, updated_at
-          ) VALUES (?, ?, ?, 'audio', ?, ?, NULL, ?, ?, ?)`,
+            original_filename, created_at, updated_at, container, bitrate, sample_rate,
+            channels, checksum, album, artist, narrator
+          ) VALUES (?, ?, ?, 'audio', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         input.assetId,
@@ -614,9 +740,18 @@ async function insertChapterWithAudio(
         input.r2Key,
         input.contentType,
         input.sizeBytes,
+        input.durationSeconds,
         input.originalFilename,
         input.now,
         input.now,
+        input.container,
+        input.bitrate,
+        input.sampleRate,
+        input.channels,
+        input.checksum,
+        input.album,
+        input.artist,
+        input.narrator,
       ),
     db
       .prepare(
@@ -639,6 +774,103 @@ async function insertChapterWithAudio(
   ]);
 }
 
+function isChecksumConstraint(err: unknown): boolean {
+  return err instanceof Error && /checksum/i.test(err.message);
+}
+
+function coverObjectName(contentType: string): string {
+  if (contentType === "image/png") return "cover.png";
+  if (contentType === "image/webp") return "cover.webp";
+  if (contentType === "image/gif") return "cover.gif";
+  return "cover.jpg";
+}
+
+async function fillEmptyBookFields(
+  db: D1Database,
+  audiobookId: string,
+  input: { album: string | null; artist: string | null; narrator: string | null; now: number },
+): Promise<void> {
+  if (!input.album && !input.artist && !input.narrator) return;
+  await db
+    .prepare(
+      `UPDATE audiobooks SET
+          title = CASE WHEN (title IS NULL OR title = '') AND ? IS NOT NULL THEN ? ELSE title END,
+          author = CASE WHEN author IS NULL AND ? IS NOT NULL THEN ? ELSE author END,
+          narrator = CASE WHEN narrator IS NULL AND ? IS NOT NULL THEN ? ELSE narrator END,
+          updated_at = CASE
+            WHEN ((title IS NULL OR title = '') AND ? IS NOT NULL)
+              OR (author IS NULL AND ? IS NOT NULL)
+              OR (narrator IS NULL AND ? IS NOT NULL)
+            THEN ?
+            ELSE updated_at
+          END
+        WHERE id = ? AND removed_at IS NULL`,
+    )
+    .bind(
+      input.album,
+      input.album,
+      input.artist,
+      input.artist,
+      input.narrator,
+      input.narrator,
+      input.album,
+      input.artist,
+      input.narrator,
+      input.now,
+      audiobookId,
+    )
+    .run();
+}
+
+async function maybeStoreCover(
+  db: D1Database,
+  bucket: R2Bucket,
+  input: { audiobookId: string; cover: EmbeddedCover; now: number },
+): Promise<void> {
+  const existing = await db
+    .prepare(
+      `SELECT id FROM assets WHERE audiobook_id = ? AND kind = 'cover' AND removed_at IS NULL`,
+    )
+    .bind(input.audiobookId)
+    .first();
+  if (existing) return;
+
+  const assetId = crypto.randomUUID();
+  const filename = coverObjectName(input.cover.contentType);
+  const r2Key = `audiobooks/${input.audiobookId}/cover/${assetId}/${filename}`;
+  await bucket.put(r2Key, input.cover.bytes, {
+    httpMetadata: { contentType: input.cover.contentType },
+  });
+  try {
+    await db.batch([
+      db
+        .prepare(
+          `INSERT INTO assets (
+              id, audiobook_id, r2_key, kind, content_type, size_bytes, duration_seconds,
+              original_filename, created_at, updated_at
+            ) VALUES (?, ?, ?, 'cover', ?, ?, NULL, ?, ?, ?)`,
+        )
+        .bind(
+          assetId,
+          input.audiobookId,
+          r2Key,
+          input.cover.contentType,
+          input.cover.bytes.byteLength,
+          filename,
+          input.now,
+          input.now,
+        ),
+      db
+        .prepare(`UPDATE audiobooks SET updated_at = ? WHERE id = ? AND removed_at IS NULL`)
+        .bind(input.now, input.audiobookId),
+    ]);
+  } catch (err) {
+    await bucket.delete(r2Key);
+    if (isUniqueConstraint(err)) return;
+    throw err;
+  }
+}
+
 async function loadAudiobook(db: D1Database, id: string): Promise<Audiobook | null> {
   const row = await db
     .prepare(
@@ -646,14 +878,18 @@ async function loadAudiobook(db: D1Database, id: string): Promise<Audiobook | nu
           a.id, a.title, a.subtitle, a.author, a.narrator,
           a.series_title, a.series_index, a.description,
           a.created_at, a.updated_at,
-          COUNT(ch.id) AS chapter_count
+          COUNT(ch.id) AS chapter_count,
+          EXISTS (
+            SELECT 1 FROM assets cov
+            WHERE cov.audiobook_id = a.id AND cov.kind = 'cover' AND cov.removed_at IS NULL
+          ) AS has_cover
         FROM audiobooks a
         LEFT JOIN chapters ch ON ch.audiobook_id = a.id AND ch.removed_at IS NULL
         WHERE a.id = ? AND a.removed_at IS NULL
         GROUP BY a.id`,
     )
     .bind(id)
-    .first<AudiobookRecord & { chapter_count: number }>();
+    .first<AudiobookRecord & { chapter_count: number; has_cover: number }>();
   return row ? mapAudiobook(row) : null;
 }
 
@@ -663,7 +899,7 @@ async function loadChapter(db: D1Database, id: string): Promise<Chapter | null> 
       `SELECT
           ch.id, ch.audiobook_id, ch.position, ch.title, ch.audio_asset_id,
           ch.created_at, ch.updated_at,
-          a.duration_seconds, a.size_bytes
+          a.duration_seconds, a.size_bytes, a.container, a.bitrate, a.sample_rate, a.channels
         FROM chapters ch
         LEFT JOIN assets a ON a.id = ch.audio_asset_id AND a.removed_at IS NULL
         WHERE ch.id = ? AND ch.removed_at IS NULL`,
@@ -691,7 +927,7 @@ async function touchAudiobook(db: D1Database, id: string, now: number): Promise<
     .run();
 }
 
-function mapAudiobook(row: AudiobookRecord & { chapter_count: number }): Audiobook {
+function mapAudiobook(row: AudiobookRecord & { chapter_count: number; has_cover?: number }): Audiobook {
   return {
     id: row.id,
     title: row.title,
@@ -704,6 +940,7 @@ function mapAudiobook(row: AudiobookRecord & { chapter_count: number }): Audiobo
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     chapterCount: Number(row.chapter_count),
+    hasCover: Boolean(row.has_cover),
   };
 }
 
@@ -716,7 +953,65 @@ function mapChapter(row: ChapterRecord): Chapter {
     audioAssetId: row.audio_asset_id,
     durationSeconds: row.duration_seconds,
     sizeBytes: row.size_bytes,
+    container: row.container,
+    bitrate: row.bitrate,
+    sampleRate: row.sample_rate,
+    channels: row.channels,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+type ByteRange = { offset: number; length?: number } | { suffix: number };
+
+function parseByteRange(header: string | undefined): ByteRange | undefined {
+  if (!header) return undefined;
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
+  if (!match) return undefined;
+  const startRaw = match[1];
+  const endRaw = match[2];
+  if (startRaw === "" && endRaw !== "") {
+    const suffix = Number(endRaw);
+    if (!Number.isInteger(suffix) || suffix <= 0) return undefined;
+    return { suffix };
+  }
+  if (startRaw === "") return undefined;
+  const offset = Number(startRaw);
+  if (!Number.isInteger(offset) || offset < 0) return undefined;
+  if (endRaw === "") return { offset };
+  const end = Number(endRaw);
+  if (!Number.isInteger(end) || end < offset) return undefined;
+  return { offset, length: end - offset + 1 };
+}
+
+function rangeIsUnsatisfiable(range: ByteRange, size: number): boolean {
+  if (size <= 0) return true;
+  if ("suffix" in range) return false;
+  return range.offset >= size;
+}
+
+function contentRangeForObject(object: R2Object): string | null {
+  const range = object.range;
+  if (!range) return null;
+  const size = object.size;
+  const recorded = range as { offset?: number; length?: number; end?: number; suffix?: number };
+  if (typeof recorded.offset === "number" && typeof recorded.end === "number") {
+    return `bytes ${recorded.offset}-${recorded.end}/${size}`;
+  }
+  if (typeof recorded.offset === "number") {
+    const length = recorded.length ?? Math.max(0, size - recorded.offset);
+    const end = recorded.offset + length - 1;
+    return `bytes ${recorded.offset}-${end}/${size}`;
+  }
+  if (typeof recorded.suffix === "number") {
+    const start = Math.max(0, size - recorded.suffix);
+    return `bytes ${start}-${size - 1}/${size}`;
+  }
+  return null;
+}
+
+function rangedByteLength(contentRange: string, size: number): number {
+  const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/.exec(contentRange);
+  if (!match) return size;
+  return Number(match[2]) - Number(match[1]) + 1;
 }

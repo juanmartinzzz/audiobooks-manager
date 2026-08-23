@@ -1,4 +1,5 @@
 import type { Audiobook, AudiobookDraft, Chapter } from "../types";
+import { durationFromAudioFile } from "./audioDuration";
 
 // Local `npm run dev` and production builds both call the production API.
 const base = import.meta.env.VITE_API_URL ?? "";
@@ -36,6 +37,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload;
 }
 
+export function audiobookCoverUrl(id: string, updatedAt?: number): string {
+  const version = updatedAt != null ? `?v=${updatedAt}` : "";
+  return `${base}/api/audiobooks/${id}/cover${version}`;
+}
+
+export function chapterAudioUrl(id: string): string {
+  return `${base}/api/chapters/${id}/audio`;
+}
+
 export function listAudiobooks() {
   return request<AudiobookListResponse>("/api/audiobooks");
 }
@@ -66,7 +76,7 @@ export function deleteChapter(id: string) {
   return request<{ ok: true }>(`/api/chapters/${id}`, { method: "DELETE" });
 }
 
-export function uploadChapterAudio(
+export async function uploadChapterAudio(
   audiobookId: string,
   input: {
     file: File;
@@ -78,10 +88,11 @@ export function uploadChapterAudio(
   if (input.file.size > MAX_AUDIO_BYTES) {
     return Promise.reject(new ApiError("Audio files must be under 512 MB", 400));
   }
+  const durationSeconds = await durationFromAudioFile(input.file);
   if (input.file.size <= DIRECT_PUT_MAX_BYTES) {
-    return uploadDirect(audiobookId, input);
+    return uploadDirect(audiobookId, { ...input, durationSeconds });
   }
-  return uploadMultipart(audiobookId, input);
+  return uploadMultipart(audiobookId, { ...input, durationSeconds });
 }
 
 function uploadDirect(
@@ -90,6 +101,7 @@ function uploadDirect(
     file: File;
     title: string;
     position?: number;
+    durationSeconds: number | null;
     onProgress?: (ratio: number) => void;
   },
 ): Promise<ChapterResponse> {
@@ -100,6 +112,7 @@ function uploadDirect(
       "X-Chapter-Title": encodeURIComponent(input.title),
       "X-Original-Filename": encodeURIComponent(input.file.name),
       ...(input.position !== undefined ? { "X-Chapter-Position": String(input.position) } : {}),
+      ...(input.durationSeconds != null ? { "X-Duration-Seconds": String(input.durationSeconds) } : {}),
     },
     onProgress: input.onProgress,
   });
@@ -111,6 +124,7 @@ async function uploadMultipart(
     file: File;
     title: string;
     position?: number;
+    durationSeconds: number | null;
     onProgress?: (ratio: number) => void;
   },
 ): Promise<ChapterResponse> {
@@ -163,6 +177,7 @@ async function uploadMultipart(
         contentType: input.file.type || "application/octet-stream",
         sizeBytes: input.file.size,
         position: input.position,
+        durationSeconds: input.durationSeconds,
         parts,
       }),
     });

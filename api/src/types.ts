@@ -11,6 +11,7 @@ export type AudiobookRecord = {
   description: string | null;
   created_at: number;
   updated_at: number;
+  has_cover?: number;
 };
 
 export type ChapterRecord = {
@@ -23,6 +24,10 @@ export type ChapterRecord = {
   updated_at: number;
   duration_seconds: number | null;
   size_bytes: number | null;
+  container: string | null;
+  bitrate: number | null;
+  sample_rate: number | null;
+  channels: number | null;
 };
 
 export type Audiobook = {
@@ -37,6 +42,7 @@ export type Audiobook = {
   createdAt: number;
   updatedAt: number;
   chapterCount: number;
+  hasCover: boolean;
 };
 
 export type Chapter = {
@@ -47,6 +53,10 @@ export type Chapter = {
   audioAssetId: string | null;
   durationSeconds: number | null;
   sizeBytes: number | null;
+  container: string | null;
+  bitrate: number | null;
+  sampleRate: number | null;
+  channels: number | null;
   createdAt: number;
   updatedAt: number;
 };

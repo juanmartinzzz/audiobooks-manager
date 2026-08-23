@@ -7,7 +7,7 @@ import { PillSelect } from "../components/interaction/PillSelect";
 import { SectionsCard, type SectionsCardSection } from "../components/interaction/SectionsCard";
 import { TextArea, TextInput } from "../components/interaction/TextInput";
 import { PillButton } from "../components/PillButton";
-import { createAudiobook, listAudiobooks } from "../lib/api";
+import { createAudiobook, listAudiobooks, audiobookCoverUrl } from "../lib/api";
 import { emptyAudiobookDraft, type Audiobook, type AudiobookDraft } from "../types";
 
 const PLACEMENT_OPTIONS = [
@@ -265,7 +265,17 @@ export function LibraryPage() {
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.03 }}
                 >
-                  <Link className="chapter-card book-card" to={`/audiobooks/${book.id}`}>
+                  <Link
+                    className={`chapter-card book-card${book.hasCover ? " has-cover" : ""}`}
+                    to={`/audiobooks/${book.id}`}
+                  >
+                    {book.hasCover ? (
+                      <img
+                        className="book-cover"
+                        src={audiobookCoverUrl(book.id, book.updatedAt)}
+                        alt=""
+                      />
+                    ) : null}
                     <span className="chapter-num mono">
                       {book.seriesTitle
                         ? `${book.seriesTitle}${book.seriesIndex ? ` · ${book.seriesIndex}` : ""}`

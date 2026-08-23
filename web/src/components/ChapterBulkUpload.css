@@ -13,6 +13,75 @@
   justify-content: space-between;
 }
 
+.chapter-upload-footer-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chapter-upload-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.chapter-upload-strip .numeric-input {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.chapter-upload-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chapter-upload-pill,
+.chapter-upload-pills-more {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.chapter-upload-pill:hover:not(:disabled),
+.chapter-upload-pills-more:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--text);
+}
+
+.chapter-upload-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 22rem;
+}
+
+.chapter-upload-pills-more {
+  border-style: dashed;
+  color: var(--text-dim);
+}
+
+.chapter-upload-pill:disabled,
+.chapter-upload-pills-more:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .file-drop {
   display: flex;
   flex-direction: column;
@@ -48,31 +117,12 @@
   color: var(--text-faint);
 }
 
-.chapter-upload-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 16px 0 14px;
-}
-
-.chapter-upload-actions .section-label {
-  margin: 0;
-  flex: 1;
-}
-
 .chapter-upload > .banner {
   margin-top: 14px;
 }
 
-.chapter-upload-actions-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .draft-grid {
+  margin-top: 16px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 14px;

@@ -1,6 +1,6 @@
-import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { Upload } from "lucide-react";
-import { SectionsCard } from "./interaction/SectionsCard";
+import { SectionsCard, type SectionsCardSection } from "./interaction/SectionsCard";
 import { TextInput } from "./interaction/TextInput";
 import { PillButton } from "./PillButton";
 import { uploadChapterAudio, MAX_AUDIO_BYTES } from "../lib/api";
@@ -10,8 +10,11 @@ import {
   isAudioFile,
   sortAudioFiles,
 } from "../lib/chapterTitle";
+import { repeatedTitleSnippets, stripTitleSnippet } from "../lib/titleSnippets";
 import { runPool } from "../lib/pool";
 import "./ChapterBulkUpload.css";
+
+const SNIPPET_PILL_LIMIT = 4;
 
 const UPLOAD_CONCURRENCY = 2;
 
@@ -63,6 +66,8 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
   const [dragOver, setDragOver] = useState(false);
   const [skipped, setSkipped] = useState(0);
   const [uploadingAll, setUploadingAll] = useState(false);
+  const [stripText, setStripText] = useState("");
+  const [snippetsExpanded, setSnippetsExpanded] = useState(false);
 
   const busy = uploadingAll || drafts.some((draft) => draft.status === "uploading");
   const pending = drafts.filter(
@@ -71,6 +76,32 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
       draft.file.size <= MAX_AUDIO_BYTES &&
       (draft.status === "ready" || draft.status === "error"),
   );
+  const suggestions = useMemo(
+    () =>
+      repeatedTitleSnippets(
+        drafts
+          .filter((draft) => draft.status === "ready" || draft.status === "error")
+          .map((draft) => draft.title),
+      ),
+    [drafts],
+  );
+
+  function applyStrip(snippet: string) {
+    const needle = snippet.trim();
+    if (!needle) return;
+    setDrafts((current) =>
+      current.map((draft) => {
+        if (draft.status === "uploading" || draft.status === "done") return draft;
+        const title = stripTitleSnippet(draft.title, needle);
+        return {
+          ...draft,
+          title: title.length > 0 ? title : "Untitled chapter",
+          status: draft.file.size > MAX_AUDIO_BYTES ? draft.status : "ready",
+          error: draft.file.size > MAX_AUDIO_BYTES ? draft.error : null,
+        };
+      }),
+    );
+  }
 
   function addFiles(fileList: FileList | File[]) {
     const incoming = Array.from(fileList);
@@ -159,6 +190,86 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
     </button>
   );
 
+  const visibleSuggestions =
+    snippetsExpanded || suggestions.length <= SNIPPET_PILL_LIMIT
+      ? suggestions
+      : suggestions.slice(0, SNIPPET_PILL_LIMIT);
+  const hiddenSuggestionCount = Math.max(0, suggestions.length - visibleSuggestions.length);
+
+  const sections: SectionsCardSection[] = [
+    {
+      id: "files",
+      title: "Files",
+      description: "Drop several files at once. Order follows the filenames.",
+      columns: [drop],
+    },
+  ];
+
+  if (drafts.length > 0) {
+    sections.push({
+      id: "strip",
+      title: "Strip from titles",
+      description: "Type any text. It comes out of every name that hasn’t been uploaded yet.",
+      columns: [
+        <form
+          key="strip"
+          className="chapter-upload-strip"
+          onSubmit={(event) => {
+            event.preventDefault();
+            applyStrip(stripText);
+            setStripText("");
+          }}
+        >
+          <TextInput
+            id="chapter-strip-text"
+            label="Text to remove"
+            value={stripText}
+            disabled={busy}
+            placeholder="e.g. The Two Towers —"
+            onChange={(event) => setStripText(event.target.value)}
+          />
+          <PillButton type="submit" disabled={busy || stripText.trim().length === 0}>
+            Remove from titles
+          </PillButton>
+        </form>,
+      ],
+    });
+  }
+
+  if (suggestions.length > 0) {
+    sections.push({
+      id: "repeated",
+      title: "Repeated in names",
+      description: "These bits show up in at least three titles. Tap one to strip it.",
+      columns: [
+        <div key="repeated" className="chapter-upload-pills" role="group" aria-label="Repeated text to remove">
+          {visibleSuggestions.map((item) => (
+            <button
+              key={item.snippet}
+              type="button"
+              className="chapter-upload-pill"
+              disabled={busy}
+              aria-label={`Remove “${item.snippet}” from ${item.count} titles`}
+              onClick={() => applyStrip(item.snippet)}
+            >
+              <span className="chapter-upload-pill-text">{item.snippet}</span>
+            </button>
+          ))}
+          {suggestions.length > SNIPPET_PILL_LIMIT ? (
+            <button
+              type="button"
+              className="chapter-upload-pills-more"
+              disabled={busy}
+              onClick={() => setSnippetsExpanded((current) => !current)}
+            >
+              {snippetsExpanded ? "Show less" : `Show more (${hiddenSuggestionCount})`}
+            </button>
+          ) : null}
+        </div>,
+      ],
+    });
+  }
+
   return (
     <div className="chapter-upload">
       <input
@@ -173,15 +284,49 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
       <SectionsCard
         id="audiobook.bulk-upload"
         title={<h2 className="chapter-upload-title">Add chapters from files</h2>}
-        meta="Names are hinted from filenames. Nothing is saved until you upload."
-        sections={[
-          {
-            id: "files",
-            title: "Files",
-            description: "Drop several files at once. Order follows the filenames.",
-            columns: [drop],
-          },
-        ]}
+        meta={
+          drafts.length > 0
+            ? `${drafts.length} ${drafts.length === 1 ? "file" : "files"} to confirm. Nothing is saved until you upload.`
+            : "Names are hinted from filenames. Nothing is saved until you upload."
+        }
+        sections={sections}
+        footer={
+          drafts.length > 0 ? (
+            <>
+              <div className="chapter-upload-footer-secondary">
+                <PillButton
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    setDrafts((current) =>
+                      current.map((draft) =>
+                        draft.status === "uploading" || draft.status === "done"
+                          ? draft
+                          : { ...draft, title: draft.hintedTitle },
+                      ),
+                    )
+                  }
+                >
+                  Re-hint names
+                </PillButton>
+                <PillButton
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    setDrafts([]);
+                    setStripText("");
+                    setSnippetsExpanded(false);
+                  }}
+                >
+                  Discard
+                </PillButton>
+              </div>
+              <PillButton disabled={busy || pending.length === 0} onClick={() => void uploadAll()}>
+                {uploadingAll ? "Uploading…" : `Upload all (${pending.length})`}
+              </PillButton>
+            </>
+          ) : null
+        }
       />
 
       {skipped > 0 ? (
@@ -189,104 +334,73 @@ export function ChapterBulkUpload({ audiobookId, nextPosition, onUploaded }: Pro
       ) : null}
 
       {drafts.length > 0 ? (
-        <>
-          <div className="chapter-upload-actions">
-            <p className="section-label">
-              {drafts.length} {drafts.length === 1 ? "file" : "files"} to confirm
-            </p>
-            <div className="chapter-upload-actions-buttons">
-              <PillButton
-                variant="ghost"
-                disabled={busy}
-                onClick={() =>
-                  setDrafts((current) =>
-                    current.map((draft) =>
-                      draft.status === "uploading" || draft.status === "done"
-                        ? draft
-                        : { ...draft, title: draft.hintedTitle },
-                    ),
-                  )
-                }
-              >
-                Re-hint names
-              </PillButton>
-              <PillButton variant="ghost" disabled={busy} onClick={() => setDrafts([])}>
-                Discard
-              </PillButton>
-              <PillButton disabled={busy || pending.length === 0} onClick={() => void uploadAll()}>
-                {uploadingAll ? "Uploading…" : `Upload all (${pending.length})`}
-              </PillButton>
-            </div>
-          </div>
-
-          <div className="draft-grid">
-            {drafts.map((draft) => (
-              <SectionsCard
-                key={draft.id}
-                id={`audiobook.chapter-draft.${draft.id}`}
-                title={
-                  <h3 className="draft-card-title">{draft.title.trim() || "Untitled chapter"}</h3>
-                }
-                meta={
-                  <>
-                    <span>{draft.file.name}</span>
-                    <span>{formatBytes(draft.file.size)}</span>
-                    <span className={`draft-card-status is-${draft.status}`}>{statusLabel(draft)}</span>
-                  </>
-                }
-                sections={[
-                  {
-                    id: "title",
-                    title: "Chapter title",
-                    description: "Hinted from the filename. Edit it before this file is uploaded.",
-                    columns: [
-                      <TextInput
-                        key="title"
-                        label="Title"
-                        value={draft.title}
-                        disabled={draft.status === "uploading" || draft.status === "done"}
-                        onChange={(event) => setDraft(draft.id, { title: event.target.value, status: "ready", error: null })}
-                      />,
-                    ],
-                  },
-                ]}
-                footer={
-                  <>
-                    {draft.status === "uploading" ? (
-                      <progress className="draft-progress" max={1} value={draft.progress} />
-                    ) : (
-                      <PillButton
-                        variant="ghost"
-                        disabled={busy}
-                        onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}
-                      >
-                        Remove
-                      </PillButton>
-                    )}
+        <div className="draft-grid">
+          {drafts.map((draft) => (
+            <SectionsCard
+              key={draft.id}
+              id={`audiobook.chapter-draft.${draft.id}`}
+              title={
+                <h3 className="draft-card-title">{draft.title.trim() || "Untitled chapter"}</h3>
+              }
+              meta={
+                <>
+                  <span>{draft.file.name}</span>
+                  <span>{formatBytes(draft.file.size)}</span>
+                  <span className={`draft-card-status is-${draft.status}`}>{statusLabel(draft)}</span>
+                </>
+              }
+              sections={[
+                {
+                  id: "title",
+                  title: "Chapter title",
+                  description: "Hinted from the filename. Edit it before this file is uploaded.",
+                  columns: [
+                    <TextInput
+                      key="title"
+                      label="Title"
+                      value={draft.title}
+                      disabled={draft.status === "uploading" || draft.status === "done"}
+                      onChange={(event) => setDraft(draft.id, { title: event.target.value, status: "ready", error: null })}
+                    />,
+                  ],
+                },
+              ]}
+              footer={
+                <>
+                  {draft.status === "uploading" ? (
+                    <progress className="draft-progress" max={1} value={draft.progress} />
+                  ) : (
                     <PillButton
-                      disabled={
-                        busy ||
-                        draft.title.trim().length === 0 ||
-                        draft.status === "done" ||
-                        draft.status === "uploading" ||
-                        draft.file.size > MAX_AUDIO_BYTES
-                      }
-                      onClick={() => void uploadDraft(draft)}
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}
                     >
-                      {draft.status === "done"
-                        ? "Uploaded"
-                        : draft.status === "uploading"
-                          ? "Uploading…"
-                          : draft.status === "error"
-                            ? "Retry"
-                            : "Upload this chapter"}
+                      Remove
                     </PillButton>
-                  </>
-                }
-              />
-            ))}
-          </div>
-        </>
+                  )}
+                  <PillButton
+                    disabled={
+                      busy ||
+                      draft.title.trim().length === 0 ||
+                      draft.status === "done" ||
+                      draft.status === "uploading" ||
+                      draft.file.size > MAX_AUDIO_BYTES
+                    }
+                    onClick={() => void uploadDraft(draft)}
+                  >
+                    {draft.status === "done"
+                      ? "Uploaded"
+                      : draft.status === "uploading"
+                        ? "Uploading…"
+                        : draft.status === "error"
+                          ? "Retry"
+                          : "Upload this chapter"}
+                  </PillButton>
+                </>
+              }
+            />
+          ))}
+        </div>
       ) : null}
     </div>
   );

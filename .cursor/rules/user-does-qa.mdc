@@ -1,0 +1,12 @@
+---
+description: Prefer the user as QA; ask before spending time verifying yourself
+alwaysApply: true
+---
+
+# User is the QA
+
+Do not spend a long time verifying, synthesizing fixtures, uploading test files, or clicking through the app unless the user asked for that.
+
+After implementing, say what changed and what is worth checking. Ask whether they want you to QA it or they will. If they will, stop there.
+
+Typecheck or a quick sanity check is fine when it is cheap. Skip elaborate end-to-end verification, generated audio, curl scripts, and browser walkthroughs unless they opt in.

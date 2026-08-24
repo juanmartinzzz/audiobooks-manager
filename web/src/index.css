@@ -409,8 +409,14 @@ main {
 
 .pill-btn-solid {
   background: var(--gold);
-  color: #0a0a0a;
+  color: var(--accent-contrast);
   border-color: var(--gold);
+}
+
+.pill-btn-solid:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--accent-contrast);
 }
 
 .pill-btn-ghost {
@@ -582,7 +588,7 @@ main {
   transition: all 0.15s ease;
 }
 
-.transport-btn:hover:not(:disabled) {
+.transport-btn:hover:not(:disabled):not(.play-main) {
   border-color: var(--gold);
   color: var(--gold-bright);
 }
@@ -591,12 +597,13 @@ main {
   width: 56px;
   height: 56px;
   background: linear-gradient(160deg, #ffffff, #c7c7c7);
-  color: #0a0a0a;
+  color: var(--accent-contrast);
   border: none;
 }
 
 .transport-btn.play-main:hover:not(:disabled) {
   filter: brightness(1.1);
+  color: var(--accent-contrast);
 }
 
 .transport-btn:disabled {
@@ -946,7 +953,7 @@ main {
   padding: 3px 0 4px;
 }
 
-.mini-player-btn:hover:not(:disabled) {
+.mini-player-btn:hover:not(:disabled):not(.mini-player-play) {
   border-color: var(--gold);
   color: var(--gold-bright);
 }
@@ -972,7 +979,7 @@ main {
   width: 46px;
   height: 46px;
   background: linear-gradient(160deg, #ffffff, #c7c7c7);
-  color: #0a0a0a;
+  color: var(--accent-contrast);
   border: none;
   padding: 0;
   flex-direction: row;
@@ -980,7 +987,7 @@ main {
 
 .mini-player-play:hover:not(:disabled) {
   filter: brightness(1.08);
-  color: #0a0a0a;
+  color: var(--accent-contrast);
 }
 
 .mini-player-play.is-playing {

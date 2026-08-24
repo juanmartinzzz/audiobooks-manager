@@ -92,6 +92,7 @@ export function NowPlaying({
   const sleepChoiceRef = useRef("off");
 
   const [playing, setPlaying] = useState(false);
+  const [keepMini, setKeepMini] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(chapter.durationSeconds ?? 0);
   const [sleepChoice, setSleepChoice] = useState("off");
@@ -223,9 +224,9 @@ export function NowPlaying({
   }, [expanded, chapter.id]);
 
   useEffect(() => {
-    document.body.classList.toggle("has-mini-player", playing);
+    document.body.classList.toggle("has-mini-player", keepMini);
     return () => document.body.classList.remove("has-mini-player");
-  }, [playing]);
+  }, [keepMini]);
 
   useEffect(() => {
     lastSeenSegmentRef.current = -1;
@@ -261,7 +262,10 @@ export function NowPlaying({
       });
     }
 
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => {
+      setPlaying(true);
+      setKeepMini(true);
+    };
     const onPause = () => setPlaying(false);
     const onTimeUpdate = () => {
       setCurrentTime(audio.currentTime || 0);
@@ -316,7 +320,10 @@ export function NowPlaying({
     audio.addEventListener("error", onError);
     audio.playbackRate = prefsRef.current.playbackRate;
     setPlaying(!audio.paused);
-    if (!audio.paused) setCurrentTime(audio.currentTime || 0);
+    if (!audio.paused) {
+      setKeepMini(true);
+      setCurrentTime(audio.currentTime || 0);
+    }
     applyLoadedDuration(audio);
     if (audio.readyState >= 1) onLoaded();
 
@@ -393,7 +400,7 @@ export function NowPlaying({
   }
 
   const pct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
-  const showMini = playing;
+  const showMini = keepMini;
 
   return (
     <>

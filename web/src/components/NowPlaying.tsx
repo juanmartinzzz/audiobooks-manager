@@ -90,7 +90,6 @@ export function NowPlaying({
   const didAutoplayRef = useRef(false);
   const sleepEndsAtRef = useRef<number | null>(null);
   const sleepChoiceRef = useRef("off");
-  const ignoreMiniRevealRef = useRef(false);
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -98,7 +97,6 @@ export function NowPlaying({
   const [sleepChoice, setSleepChoice] = useState("off");
   const [sleepLeft, setSleepLeft] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [fullInView, setFullInView] = useState(expanded);
 
   prefsRef.current = prefs;
   settingsRef.current = settings;
@@ -220,39 +218,14 @@ export function NowPlaying({
   }, [chapter.id]);
 
   useEffect(() => {
-    if (!expanded) {
-      setFullInView(false);
-      return;
-    }
-    const el = sectionRef.current;
-    if (!el) return;
-    setFullInView(true);
-    ignoreMiniRevealRef.current = true;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (ignoreMiniRevealRef.current) return;
-        setFullInView(entry.isIntersecting && entry.intersectionRatio >= 0.18);
-      },
-      { threshold: [0, 0.18, 0.4, 0.7] },
-    );
-    observer.observe(el);
-    const frame = window.requestAnimationFrame(() => {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    const unlock = window.setTimeout(() => {
-      ignoreMiniRevealRef.current = false;
-    }, 750);
-    return () => {
-      observer.disconnect();
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(unlock);
-    };
+    if (!expanded) return;
+    sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [expanded, chapter.id]);
 
   useEffect(() => {
-    document.body.classList.toggle("has-mini-player", !expanded || !fullInView);
+    document.body.classList.toggle("has-mini-player", playing);
     return () => document.body.classList.remove("has-mini-player");
-  }, [expanded, fullInView]);
+  }, [playing]);
 
   useEffect(() => {
     lastSeenSegmentRef.current = -1;
@@ -420,7 +393,7 @@ export function NowPlaying({
   }
 
   const pct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
-  const showMini = !expanded || !fullInView;
+  const showMini = playing;
 
   return (
     <>

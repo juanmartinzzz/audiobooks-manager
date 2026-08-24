@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { Moon, Pause, Play, SkipBack, SkipForward, X } from "lucide-react";
+import { ChevronDown, Moon, Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { MiniPlayer } from "./MiniPlayer";
 import { PillSelect } from "./interaction/PillSelect";
 import { formatPlaybackTime } from "../lib/audioDuration";
 import { completedFromPosition } from "../lib/playbackProgress";
@@ -49,7 +50,11 @@ type Props = {
   onPrefsChange: (prefs: PlaybackPrefs) => void;
   onProgress: (payload: ProgressPayload) => void;
   onSelectChapter: (id: string) => void;
+  onExpand: () => void;
+  onCollapse: () => void;
   onClose: () => void;
+  expanded: boolean;
+  coverUrl: string | null;
 };
 
 export function NowPlaying({
@@ -63,7 +68,11 @@ export function NowPlaying({
   onPrefsChange,
   onProgress,
   onSelectChapter,
+  onExpand,
+  onCollapse,
   onClose,
+  expanded,
+  coverUrl,
 }: Props) {
   const sectionRef = useRef<HTMLElement | null>(null);
   const lastSeenSegmentRef = useRef(-1);
@@ -81,6 +90,7 @@ export function NowPlaying({
   const didAutoplayRef = useRef(false);
   const sleepEndsAtRef = useRef<number | null>(null);
   const sleepChoiceRef = useRef("off");
+  const ignoreMiniRevealRef = useRef(false);
 
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -88,6 +98,7 @@ export function NowPlaying({
   const [sleepChoice, setSleepChoice] = useState("off");
   const [sleepLeft, setSleepLeft] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [fullInView, setFullInView] = useState(expanded);
 
   prefsRef.current = prefs;
   settingsRef.current = settings;
@@ -206,8 +217,42 @@ export function NowPlaying({
     setCurrentTime(resumeSecondsRef.current ?? 0);
     setDuration(chapterRef.current.durationSeconds ?? 0);
     setPlaying(false);
-    sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [chapter.id]);
+
+  useEffect(() => {
+    if (!expanded) {
+      setFullInView(false);
+      return;
+    }
+    const el = sectionRef.current;
+    if (!el) return;
+    setFullInView(true);
+    ignoreMiniRevealRef.current = true;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (ignoreMiniRevealRef.current) return;
+        setFullInView(entry.isIntersecting && entry.intersectionRatio >= 0.18);
+      },
+      { threshold: [0, 0.18, 0.4, 0.7] },
+    );
+    observer.observe(el);
+    const frame = window.requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    const unlock = window.setTimeout(() => {
+      ignoreMiniRevealRef.current = false;
+    }, 750);
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(unlock);
+    };
+  }, [expanded, chapter.id]);
+
+  useEffect(() => {
+    document.body.classList.toggle("has-mini-player", !expanded || !fullInView);
+    return () => document.body.classList.remove("has-mini-player");
+  }, [expanded, fullInView]);
 
   useEffect(() => {
     lastSeenSegmentRef.current = -1;
@@ -375,16 +420,29 @@ export function NowPlaying({
   }
 
   const pct = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const showMini = !expanded || !fullInView;
 
   return (
-    <section ref={sectionRef} className="now-playing" aria-live="polite">
+    <>
+      <section
+        ref={sectionRef}
+        className={`now-playing${expanded ? "" : " is-collapsed"}`}
+        aria-live="polite"
+        hidden={!expanded}
+      >
       <div className="np-head">
         <div>
           <p className="eyebrow">Chapter {toRoman(chapter.position)} · Now playing</p>
           <h2>{chapter.title}</h2>
         </div>
-        <button type="button" className="np-close" onClick={onClose} aria-label="Close player">
-          <X size={20} />
+        <button
+          type="button"
+          className="np-close"
+          onClick={onCollapse}
+          aria-label="Minimize player"
+          title="Keep listening in the mini player"
+        >
+          <ChevronDown size={20} />
         </button>
       </div>
 
@@ -516,12 +574,28 @@ export function NowPlaying({
       ) : (
         <p className="muted">This chapter has no audio file yet. Play stays off until a file is attached.</p>
       )}
-
-      {toast ? (
-        <div className="player-toast" role="status">
-          {toast}
-        </div>
-      ) : null}
     </section>
+    {toast ? (
+      <div className="player-toast" role="status">
+        {toast}
+      </div>
+    ) : null}
+    {showMini ? (
+      <MiniPlayer
+        chapter={chapter}
+        coverUrl={coverUrl}
+        playing={playing}
+        currentTime={currentTime}
+        duration={duration}
+        skipBack={settings.skipBack}
+        skipForward={settings.skipForward}
+        hasAudio={hasAudio}
+        onExpand={onExpand}
+        onTogglePlay={togglePlay}
+        onSkip={skipBy}
+        onStop={onClose}
+      />
+    ) : null}
+    </>
   );
 }

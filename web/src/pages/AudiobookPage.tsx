@@ -48,6 +48,7 @@ function AudiobookPageInner({ id }: { id: string }) {
   const [chapterTitle, setChapterTitle] = useState("");
   const [adding, setAdding] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [playerExpanded, setPlayerExpanded] = useState(false);
   const [autoplay, setAutoplay] = useState(false);
   const [resumeAt, setResumeAt] = useState<number | null>(null);
   const [progressByChapter, setProgressByChapter] = useState<Record<string, ChapterProgress>>({});
@@ -112,7 +113,10 @@ function AudiobookPageInner({ id }: { id: string }) {
   async function onDeleteChapter(chapterId: string) {
     if (!id) return;
     await deleteChapter(chapterId);
-    if (activeId === chapterId) setActiveId(null);
+    if (activeId === chapterId) {
+      setActiveId(null);
+      setPlayerExpanded(false);
+    }
     await refresh(id);
   }
 
@@ -178,8 +182,9 @@ function AudiobookPageInner({ id }: { id: string }) {
     [id],
   );
 
-  function activateChapter(chapter: Chapter, shouldAutoplay: boolean) {
+  function activateChapter(chapter: Chapter, shouldAutoplay: boolean, expand = true) {
     const audio = audioRef.current;
+    if (expand) setPlayerExpanded(true);
     if (activeId === chapter.id) {
       if (shouldAutoplay && chapter.audioAssetId) {
         void audio?.play().catch(() => undefined);
@@ -205,9 +210,14 @@ function AudiobookPageInner({ id }: { id: string }) {
     }
   }
 
+  function collapsePlayer() {
+    setPlayerExpanded(false);
+  }
+
   function closePlayer() {
     audioRef.current?.pause();
     setActiveId(null);
+    setPlayerExpanded(false);
   }
 
   function onSaveSettings(next: PlaybackSettings) {
@@ -441,12 +451,16 @@ function AudiobookPageInner({ id }: { id: string }) {
             prefs={prefs}
             autoplay={autoplay}
             resumeSeconds={resumeAt}
+            expanded={playerExpanded}
+            coverUrl={audiobook.hasCover ? audiobookCoverUrl(audiobook.id, audiobook.updatedAt) : null}
             onPrefsChange={onPrefsChange}
             onProgress={onProgress}
             onSelectChapter={(chapterId) => {
               const next = chapters.find((item) => item.id === chapterId);
-              if (next) activateChapter(next, true);
+              if (next) activateChapter(next, true, playerExpanded);
             }}
+            onExpand={() => setPlayerExpanded(true)}
+            onCollapse={collapsePlayer}
             onClose={closePlayer}
           />
         ) : null}
